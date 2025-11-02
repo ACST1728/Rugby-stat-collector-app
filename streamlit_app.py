@@ -57,8 +57,6 @@ def ensure_admin(conn):
                      (user, ph, "admin"))
         conn.commit()
 
-        st.write("✅ Default admin created: admin / admin123")
-
 # ✅ Login form
 def login(conn):
     st.title("🏉 Rugby Stats Login")
