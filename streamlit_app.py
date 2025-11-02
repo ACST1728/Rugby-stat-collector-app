@@ -97,8 +97,12 @@ def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
-        if "_dbx_sync" in st.session_state:
-    st.session_state["_dbx_sync"]()
+       # Run Dropbox sync if exists
+if st.session_state.get("_dbx_sync"):
+    try:
+        st.session_state["_dbx_sync"]()
+    except Exception as e:
+        st.warning(f"Dropbox sync failed: {e}")
 
 
 
