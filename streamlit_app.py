@@ -1,29 +1,31 @@
+#!/usr/bin/env python3
+import os, sqlite3, bcrypt, importlib
 import streamlit as st
-import sqlite3, bcrypt, os
-import importlib
 
-DB_PATH = os.environ.get("RUGBY_DB_PATH", "/mount/data/rugby_stats.db")
-
-# ---------------- DB + Auth ---------------- #
-
-@st.cache_resource
-def get_conn():
-  # Decide DB location
-    default_path = "/mount/data/rugby_stats.db"
-    fallback_path = "rugby_stats.db"
-
-    # Try secure DB path first
-    db_path = default_path
+### ---------------------- DB PATH ---------------------- ###
+def _db_path() -> str:
     try:
-        os.makedirs(os.path.dirname(default_path), exist_ok=True)
+        if "RUGBY_DB_PATH" in st.secrets:
+            return str(st.secrets["RUGBY_DB_PATH"])
     except Exception:
-        # Streamlit Cloud fallback
-        db_path = fallback_path
+        pass
+    return os.environ.get("RUGBY_DB_PATH", "/mount/data/rugby_stats.db")
 
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+DB_PATH = _db_path()
+
+### ---------------------- DB CONNECTION ---------------------- ###
+@st.cache_resource
+def get_conn() -> sqlite3.Connection:
+    # Ensure directory exists
+    d = os.path.dirname(DB_PATH)
+    if d and d not in ("/", ""):
+        try: os.makedirs(d, exist_ok=True)
+        except PermissionError: pass
+
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
 
-    # Create users table if missing
+    # Create users table if not exists
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -33,58 +35,74 @@ def get_conn():
         );
     """)
     conn.commit()
+
+    ensure_default_admin(conn)
     return conn
 
-def login(conn, u, p):
-    row = conn.execute(
-        "SELECT username, pass_hash, role, active FROM users WHERE username=?",
-        (u,)
-    ).fetchone()
-    if row and row["active"] == 1:
-        if bcrypt.checkpw(p.encode(), row["pass_hash"]):
-            return row["username"], row["role"]
-    return None, None
+### ---------------------- DEFAULT ADMIN SEED ---------------------- ###
+def ensure_default_admin(conn):
+    n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if n == 0:
+        user = os.environ.get("APP_ADMIN_USER", "admin")
+        pw = os.environ.get("APP_ADMIN_PASS", "admin123")
+        ph = bcrypt.hashpw(pw.encode(), bcrypt.gensalt())
 
-def logout():
-    for k in ["user","role"]:
-        if k in st.session_state:
-            del st.session_state[k]
-    st.rerun()
+        conn.execute(
+            "INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
+            (user, ph, "admin"),
+        )
+        conn.commit()
 
-# -------------- UI Wrapper --------------- #
+### ---------------------- AUTH HELPERS ---------------------- ###
+def login_form(conn):
+    st.title("🔒 Rugby Stats Login")
 
-def login_screen(conn):
-    st.title("🏉 Rugby Stats Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
 
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
+    if st.button("Login ✅", use_container_width=True):
+        row = conn.execute(
+            "SELECT username, pass_hash, role, active FROM users WHERE username=?",
+            (username,),
+        ).fetchone()
 
-    if st.button("Login"):
-        user, role = login(conn, u, p)
-        if user:
-            st.session_state["user"] = user
-            st.session_state["role"] = role
-            st.success("Logged in!")
-            st.rerun()
+        if not row:
+            st.error("User not found"); return
+
+        if row["active"] != 1:
+            st.error("User inactive"); return
+
+        if bcrypt.checkpw(password.encode(), row["pass_hash"]):
+            st.session_state["user"] = {
+                "username": row["username"],
+                "role": row["role"]
+            }
+            st.experimental_rerun()
         else:
-            st.error("Invalid login")
+            st.error("Incorrect password")
 
+def logout_button():
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
+        st.session_state.clear()
+        st.experimental_rerun()
+
+### ---------------------- MAIN ROUTER ---------------------- ###
 def main():
+    st.set_page_config(page_title="Rugby Stats V5", layout="wide")
+
     conn = get_conn()
 
-    # Show login if not logged in
+    # If not logged in -> login page
     if "user" not in st.session_state:
-        login_screen(conn)
-        return
+        return login_form(conn)
 
-    # Show top bar
-    st.sidebar.success(f"Logged in as {st.session_state['user']} ({st.session_state['role']})")
-    if st.sidebar.button("Logout"):
-        logout()
+    # Show logout button
+    logout_button()
 
-    # Load V5 app
+    # Load main rugby app
     app_mod = importlib.import_module("rugby_stats_app_v5_main")
-    app_mod.main()
+    app_mod.main(conn, st.session_state["user"]["role"])
 
+### ---------------------- START ---------------------- ###
 if __name__ == "__main__":
     main()
