@@ -314,3 +314,45 @@ def main():
     with tabs[5]: page_video(conn, role)
 
 if __name__=="__main__": main()
+    
+### -----------------------------------------------------------
+### MAIN ENTRY POINT FOR STREAMLIT APP (v5)
+### -----------------------------------------------------------
+
+def main(conn, role):
+    st.title("🏉 Rugby Stats Collector v5")
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📋 Match Events",
+        "🎦 Video Review",
+        "👥 Players",
+        "📊 Metrics & Leaderboard",
+        "⚙️ Admin"
+    ])
+
+    with tab1:
+        st.subheader("Match Event Logging")
+        # TODO: hook your event logging UI here
+
+    with tab2:
+        st.subheader("Video Review & Bookmarks")
+        try:
+            video_hotkeys(conn)
+        except Exception as e:
+            st.error(f"Video component failed: {e}")
+
+    with tab3:
+        st.subheader("Player Database")
+        # TODO: player management UI here
+
+    with tab4:
+        st.subheader("Metrics & Leaderboard")
+        # TODO: metrics + charts UI here
+
+    if role == "admin":
+        with tab5:
+            st.subheader("Admin Settings")
+            st.info("Admin tools coming soon (user management, exports, etc.)")
+    else:
+        with tab5:
+            st.warning("Admin only")
