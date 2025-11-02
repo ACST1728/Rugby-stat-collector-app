@@ -2,6 +2,26 @@
 import os, sqlite3, bcrypt, importlib
 import streamlit as st
 
+from dropbox import Dropbox
+
+def dropbox_download(dbx, cloud_path, local_path):
+    try:
+        md, res = dbx.files_download(cloud_path)
+        with open(local_path, "wb") as f:
+            f.write(res.content)
+        return True
+    except:
+        return False
+
+def dropbox_upload(dbx, local_path, cloud_path):
+    try:
+        with open(local_path, "rb") as f:
+            dbx.files_upload(f.read(), cloud_path, mode=dropbox.files.WriteMode.overwrite)
+        return True
+    except Exception as e:
+        st.error(f"Dropbox sync failed: {e}")
+        return False
+
 # ---------------- DB PATH ---------------- #
 def _db_path() -> str:
     try:
@@ -16,42 +36,34 @@ DB_PATH = _db_path()
 
 # ---------------- DB CONN ---------------- #
 @st.cache_resource
-def get_conn() -> sqlite3.Connection:
-    db_path = DB_PATH
+def get_conn():
+    import os
 
-    # If we cannot access the folder, fall back to memory DB
-    try:
-        folder = os.path.dirname(db_path)
-        if folder and folder not in ("", "/") and not os.path.exists(folder):
-            raise PermissionError("Cannot create folder in Streamlit Cloud")
+    dbx = Dropbox(st.secrets["DROPBOX_TOKEN"])
+    
+    cloud = st.secrets["DROPBOX_DB_PATH"]
+    local = st.secrets["LOCAL_DB_PATH"]
 
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-    except Exception:
-        st.warning("⚠️ Cloud storage restricted — using temporary DB (data won't persist)")
-        conn = sqlite3.connect(":memory:", check_same_thread=False)
+    # Ensure folder exists
+    os.makedirs(os.path.dirname(local), exist_ok=True) if "/" in local else None
 
+    # Try download DB first
+    dropbox_download(dbx, cloud, local)
+
+    conn = sqlite3.connect(local, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
 
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        username TEXT PRIMARY KEY,
-        pass_hash BLOB NOT NULL,
-        role TEXT NOT NULL DEFAULT 'admin',
-        active INTEGER NOT NULL DEFAULT 1
-    );
-    """)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
 
-    # Seed admin if DB empty
-    if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-        user = os.environ.get("APP_ADMIN_USER", "admin")
-        pw   = os.environ.get("APP_ADMIN_PASS", "admin123")
-        ph   = bcrypt.hashpw(pw.encode(), bcrypt.gensalt())
-        conn.execute(
-            "INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
-            (user, ph, "admin")
-        )
-        conn.commit()
+    # Auto create schema
+    create_schema_if_needed(conn)
 
+    # Upload DB back on shutdown
+    def sync_to_dropbox():
+        dropbox_upload(dbx, local, cloud)
+
+    st.session_state["_dbx_sync"] = sync_to_dropbox
     return conn
 
 # ---------------- AUTH UI ---------------- #
@@ -85,6 +97,20 @@ def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
+    if "_dbx_sync" in st.session_state:
+    st.session_state["_dbx_sync"]()
+
+
+def create_schema_if_needed(conn):
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS users(
+            username TEXT PRIMARY KEY,
+            pass_hash BLOB NOT NULL,
+            role TEXT NOT NULL DEFAULT 'admin',
+            active INTEGER NOT NULL DEFAULT 1
+        );
+    """)
+    conn.commit()
 
 # ---------------- MAIN ---------------- #
 def main():
@@ -101,3 +127,6 @@ def main():
     app_mod.main(conn, st.session_state["user"]["role"])
 
 main()
+if "_dbx_sync" in st.session_state:
+    st.session_state["_dbx_sync"]()
+
