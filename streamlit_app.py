@@ -97,8 +97,9 @@ def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
-    if "_dbx_sync" in st.session_state:
+        if "_dbx_sync" in st.session_state:
     st.session_state["_dbx_sync"]()
+
 
 
 def create_schema_if_needed(conn):
