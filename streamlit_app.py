@@ -6,20 +6,22 @@
 import os, sqlite3, bcrypt, importlib
 import streamlit as st
 
-# ✅ DB path – always writable
+# ✅ DB path for Streamlit Cloud persistent storage
 def _db_path():
+    # Streamlit Cloud persistent dir
+    cloud_path = "/mount/data/rugby_stats.db"
     try:
-        return st.secrets["RUGBY_DB_PATH"]
+        os.makedirs("/mount/data", exist_ok=True)
+        return cloud_path
     except Exception:
         pass
-    
-    base = "data"
-    try: os.makedirs(base, exist_ok=True)
-    except Exception: pass
 
-    return f"{base}/rugby_stats.db"
+    # Local dev fallback
+    local = "rugby_stats.db"
+    return local
 
 DB_PATH = _db_path()
+
 
 # ✅ Create DB connection
 @st.cache_resource
