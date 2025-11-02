@@ -17,18 +17,21 @@ DB_PATH = _db_path()
 # ---------------- DB CONN ---------------- #
 @st.cache_resource
 def get_conn() -> sqlite3.Connection:
-    # Create folder IF allowed in Streamlit FS
-    folder = os.path.dirname(DB_PATH)
-    if folder and folder not in ("", "/"):
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except PermissionError:
-            pass
+    db_path = DB_PATH
 
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # If we cannot access the folder, fall back to memory DB
+    try:
+        folder = os.path.dirname(db_path)
+        if folder and folder not in ("", "/") and not os.path.exists(folder):
+            raise PermissionError("Cannot create folder in Streamlit Cloud")
+
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+    except Exception:
+        st.warning("⚠️ Cloud storage restricted — using temporary DB (data won't persist)")
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
+
     conn.row_factory = sqlite3.Row
 
-    # Ensure users table
     conn.execute("""
     CREATE TABLE IF NOT EXISTS users(
         username TEXT PRIMARY KEY,
@@ -38,40 +41,38 @@ def get_conn() -> sqlite3.Connection:
     );
     """)
 
-    # Ensure default admin ONLY IF DB empty
-    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if count == 0:
-        default_user = os.environ.get("APP_ADMIN_USER", "admin")
-        default_pass = os.environ.get("APP_ADMIN_PASS", "admin123")
-        ph = bcrypt.hashpw(default_pass.encode(), bcrypt.gensalt())
+    # Seed admin if DB empty
+    if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+        user = os.environ.get("APP_ADMIN_USER", "admin")
+        pw   = os.environ.get("APP_ADMIN_PASS", "admin123")
+        ph   = bcrypt.hashpw(pw.encode(), bcrypt.gensalt())
         conn.execute(
             "INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
-            (default_user, ph, "admin")
+            (user, ph, "admin")
         )
         conn.commit()
 
     return conn
 
 # ---------------- AUTH UI ---------------- #
-def login(conn):
-    st.title("🔒 Login")
+def login_page(conn):
+    st.title("🔒 Rugby Stats Login")
 
-    user = st.text_input("Username")
-    pw   = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login ✅", use_container_width=True):
         row = conn.execute(
             "SELECT username, pass_hash, role, active FROM users WHERE username=?",
-            (user,)
+            (u,)
         ).fetchone()
 
         if not row:
             st.error("User not found"); return
-
         if row["active"] != 1:
             st.error("User inactive"); return
 
-        if bcrypt.checkpw(pw.encode(), row["pass_hash"]):
+        if bcrypt.checkpw(p.encode(), row["pass_hash"]):
             st.session_state["user"] = {
                 "username": row["username"],
                 "role": row["role"]
@@ -80,7 +81,7 @@ def login(conn):
         else:
             st.error("Incorrect password")
 
-def logout():
+def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
@@ -89,14 +90,13 @@ def logout():
 def main():
     st.set_page_config(page_title="Rugby Stats v5", layout="wide")
 
-    conn = get_conn()  # safe init here
+    conn = get_conn()
 
     if "user" not in st.session_state:
-        return login(conn)
+        return login_page(conn)
 
-    logout()
+    logout_button()
 
-    # Load v5 app module
     app_mod = importlib.import_module("rugby_stats_app_v5_main")
     app_mod.main(conn, st.session_state["user"]["role"])
 
