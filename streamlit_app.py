@@ -8,20 +8,15 @@ import streamlit as st
 
 # ✅ DB path for Streamlit Cloud persistent storage
 def _db_path():
-    # Streamlit Cloud persistent dir
     cloud_path = "/mount/data/rugby_stats.db"
     try:
         os.makedirs("/mount/data", exist_ok=True)
         return cloud_path
     except Exception:
         pass
-
-    # Local dev fallback
-    local = "rugby_stats.db"
-    return local
+    return "rugby_stats.db"  # local fallback
 
 DB_PATH = _db_path()
-
 
 # ✅ Create DB connection
 @st.cache_resource
@@ -52,28 +47,20 @@ def ensure_admin(conn):
         user = os.environ.get("APP_ADMIN_USER", "admin")
         pw   = os.environ.get("APP_ADMIN_PASS", "admin123")
         ph   = bcrypt.hashpw(pw.encode(), bcrypt.gensalt())
-
         conn.execute("INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
                      (user, ph, "admin"))
         conn.commit()
 
-# ✅ Login form
+# ✅ Login UI
 def login(conn):
     st.title("🏉 Rugby Stats Login")
-
     u = st.text_input("Username")
     p = st.text_input("Password", type="password")
 
     if st.button("Login ✅"):
         row = conn.execute("SELECT * FROM users WHERE username=?", (u,)).fetchone()
-        if not row:
-            st.error("User not found")
-            return
-        
-        if row["active"] != 1:
-            st.error("User inactive")
-            return
-
+        if not row: return st.error("User not found")
+        if row["active"] != 1: return st.error("User inactive")
         if bcrypt.checkpw(p.encode(), row["pass_hash"]):
             st.session_state.user = {"u": row["username"], "role": row["role"]}
             st.rerun()
@@ -84,7 +71,7 @@ def login(conn):
 def logout():
     if st.sidebar.button("🚪 Logout"):
         st.session_state.clear()
-        st.experimental_rerun()
+        st.rerun()
 
 # ✅ App router
 def main():
