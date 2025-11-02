@@ -4,12 +4,21 @@ import streamlit as st
 
 ### ---------------------- DB PATH ---------------------- ###
 def _db_path() -> str:
+    # Priority order: secret override > env var > local data folder
     try:
         if "RUGBY_DB_PATH" in st.secrets:
             return str(st.secrets["RUGBY_DB_PATH"])
     except Exception:
         pass
-    return os.environ.get("RUGBY_DB_PATH", "/mount/data/rugby_stats.db")
+
+    env = os.environ.get("RUGBY_DB_PATH")
+    if env:
+        return env
+
+    # ✅ Guaranteed writable on Streamlit Cloud
+    local_path = "data/rugby_stats.db"
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    return local_path
 
 DB_PATH = _db_path()
 
