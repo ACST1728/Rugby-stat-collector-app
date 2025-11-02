@@ -78,7 +78,7 @@ def login(conn):
 
         if bcrypt.checkpw(p.encode(), row["pass_hash"]):
             st.session_state.user = {"u": row["username"], "role": row["role"]}
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("Wrong password")
 
