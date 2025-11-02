@@ -86,14 +86,14 @@ def login_form(conn):
                 "username": row["username"],
                 "role": row["role"]
             }
-            st.experimental_rerun()
+            st.rerun()   # ✅ fixed
         else:
             st.error("Incorrect password")
 
 def logout_button():
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state.clear()
-        st.experimental_rerun()
+        st.rerun()  # ✅ fixed
 
 ### ---------------------- MAIN ROUTER ---------------------- ###
 def main():
