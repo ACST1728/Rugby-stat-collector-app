@@ -8,27 +8,31 @@ DB_PATH = os.environ.get("RUGBY_DB_PATH", "/mount/data/rugby_stats.db")
 
 @st.cache_resource
 def get_conn():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+  # Decide DB location
+    default_path = "/mount/data/rugby_stats.db"
+    fallback_path = "rugby_stats.db"
+
+    # Try secure DB path first
+    db_path = default_path
+    try:
+        os.makedirs(os.path.dirname(default_path), exist_ok=True)
+    except Exception:
+        # Streamlit Cloud fallback
+        db_path = fallback_path
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
+    # Create users table if missing
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS users(
+        CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             pass_hash BLOB NOT NULL,
             role TEXT NOT NULL DEFAULT 'admin',
             active INTEGER NOT NULL DEFAULT 1
         );
     """)
-
-    if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-        user = os.environ.get("APP_ADMIN_USER", "ACST28")
-        pw = os.environ.get("APP_ADMIN_PASS", "COYB1527")
-        ph = bcrypt.hashpw(pw.encode(), bcrypt.gensalt())
-        conn.execute("INSERT INTO users(username,pass_hash,role,active) VALUES(?,?,?,1)",
-                     (user, ph, "admin"))
-        conn.commit()
-
+    conn.commit()
     return conn
 
 def login(conn, u, p):
