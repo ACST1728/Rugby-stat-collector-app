@@ -163,10 +163,22 @@ def main():
     if "user" not in st.session_state:
         return login_screen(conn)
 
-    logout_button()
+    logout()
 
+# ✅ Admin user management entry link
+if st.session_state.user["role"] == "admin":
+    with st.sidebar:
+        if st.button("👤 Manage Users"):
+            st.session_state.show_user_admin = True
+
+# ✅ Show user admin page if toggled
+if st.session_state.get("show_user_admin"):
+    from user_admin_page import user_admin_page
+    user_admin_page(conn)
+else:
     app = importlib.import_module("rugby_stats_app_v5_main")
     app.main(conn, st.session_state.user["role"])
+
 
 if __name__ == "__main__":
     main()
