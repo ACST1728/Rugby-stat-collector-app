@@ -511,10 +511,33 @@ def page_video(conn: sqlite3.Connection, role: str):
 # -------- Master router --------
 def main(conn: sqlite3.Connection, role: str):
     init_db(conn)
-    tabs = st.tabs(["Players","Metrics","Hotkeys","Live Logger","Reports","Video Review"])
-    with tabs[0]: page_players(conn, role)
-    with tabs[1]: page_metrics(conn, role)
-    with tabs[2]: page_hotkeys(conn, role)
-    with tabs[3]: page_logger(conn, role)
-    with tabs[4]: page_reports(conn, role)
-    with tabs[5]: page_video(conn, role)
+   from components_live_logger import live_logger
+
+def main(conn: sqlite3.Connection, role: str):
+    init_db(conn)
+    st.title("🎥 Video + Live Match Tagging (Pro Mode)")
+
+    matches = _matches_df(conn)
+    if matches.empty:
+        st.warning("Create a match in Live Logger first")
+        return
+
+    mid = st.selectbox(
+        "Match",
+        matches["id"].tolist(),
+        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+    )
+
+    # Load players + metrics
+    players = _players_df(conn).to_dict("records")
+    metrics = _metrics_df(conn, only_active=True).to_dict("records")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.subheader("Video + Hotkeys")
+        st.write("Use hotkeys to tag events & create bookmarks automatically")
+        page_video(conn, role)  # reuse existing video player
+
+    with col2:
+        live_logger(conn, mid, players, metrics)
