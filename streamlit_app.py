@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sqlite3, bcrypt, importlib
+import os, io, sqlite3, bcrypt, importlib, time
 import streamlit as st
 
 # ----------------------------------------
@@ -23,7 +23,7 @@ def get_conn():
         try: os.makedirs(d, exist_ok=True)
         except Exception: pass
 
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -34,7 +34,6 @@ def get_conn():
         )
     """)
     conn.commit()
-
     seed_admin(conn)
     return conn
 
@@ -54,13 +53,68 @@ def seed_admin(conn):
     conn.commit()
 
 # ----------------------------------------
+# ☁️ Optional Dropbox sync helpers (DB file only)
+# ----------------------------------------
+def _dbx():
+    """Return a Dropbox client if token provided, else None."""
+    try:
+        token = st.secrets.get("DROPBOX_TOKEN", "").strip()
+        if not token:
+            return None
+        from dropbox import Dropbox
+        return Dropbox(token)
+    except Exception:
+        return None
+
+def dbx_upload(dbx, local_path, cloud_path):
+    try:
+        from dropbox.files import WriteMode
+        with open(local_path, "rb") as f:
+            dbx.files_upload(f.read(), cloud_path, mode=WriteMode("overwrite"))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def dbx_download(dbx, cloud_path, local_path):
+    try:
+        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+        md, res = dbx.files_download(cloud_path)
+        with open(local_path, "wb") as f:
+            f.write(res.content)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def dropbox_sidebar():
+    dbx = _dbx()
+    with st.sidebar.expander("☁️ Dropbox Sync", expanded=False):
+        if not dbx:
+            st.caption("Add `DROPBOX_TOKEN` in **Settings → Secrets** to enable DB backup.")
+            return
+        cloud_path = st.secrets.get("DROPBOX_DB_PATH", "/apps/rugby-stats/rugby_stats.db")
+        st.caption(f"Cloud path: `{cloud_path}`")
+        c1, c2 = st.columns(2)
+        if c1.button("⬆️ Upload DB"):
+            ok, err = dbx_upload(dbx, DB_PATH, cloud_path)
+            st.success("Uploaded ✅") if ok else st.error(f"Upload failed: {err}")
+        if c2.button("⬇️ Download DB"):
+            ok, err = dbx_download(dbx, cloud_path, DB_PATH)
+            if ok:
+                st.success("Downloaded ✅")
+                # purge the connection cache so Streamlit re-opens the DB file
+                st.cache_resource.clear()
+                st.rerun()
+            else:
+                st.error(f"Download failed: {err}")
+
+        # Optional gentle auto refresh to encourage periodic use; not a background task
+        st.caption("Tip: click Upload after sessions to back up your data.")
+
+# ----------------------------------------
 # ✅ Login screen — no re-runs until success
 # ----------------------------------------
 def login_screen(conn):
     st.title("🏉 Rugby Stats Login")
-
-    if "login_state" not in st.session_state:
-        st.session_state.login_state = "waiting"
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -84,7 +138,6 @@ def login_screen(conn):
                 "username": row["username"],
                 "role": row["role"]
             }
-            st.session_state.login_state = "logged_in"
             st.rerun()
         else:
             st.error("❌ Incorrect password")
@@ -103,6 +156,9 @@ def logout_button():
 def main():
     st.set_page_config(page_title="Rugby Stats", layout="wide")
     conn = get_conn()
+
+    # Dropbox tools in sidebar (optional)
+    dropbox_sidebar()
 
     if "user" not in st.session_state:
         return login_screen(conn)
