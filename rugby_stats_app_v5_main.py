@@ -47,7 +47,6 @@ def page_tagging(conn, role):
     players = _players_df(conn).to_dict("records")
     metrics = _metrics_df(conn, only_active=True).to_dict("records")
 
-    # Load videos
     vids = pd.read_sql(
         "SELECT id,label,url,offset FROM videos WHERE match_id=? ORDER BY id",
         conn, params=(match_id,)
@@ -133,7 +132,6 @@ def page_tagging(conn, role):
 # ---------------- Main App Router ----------------
 def main(conn, role):
     init_db(conn)
-
     tabs = st.tabs(["⚙️ Setup","📊 Reports","🎥 Tagging"])
 
     with tabs[0]:
@@ -144,9 +142,3 @@ def main(conn, role):
 
     with tabs[2]:
         page_tagging(conn, role)
-
-
-    with col2:
-        st.subheader("Live Stats Logging")
-        live_logger(conn, match_id, players, metrics)
-
