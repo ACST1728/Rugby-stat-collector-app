@@ -375,88 +375,138 @@ def page_reports(conn: sqlite3.Connection, role: str):
 
 # -------- Video Review --------
 def page_video(conn: sqlite3.Connection, role: str):
+    """
+    Mode B: Simple player (YouTube private link) + bookmarks list on the right.
+    No custom JS component required; timestamps are entered quickly via inputs and helpers.
+    Naming format enforced on add: YYYY-MM-DD_Team_vs_Opponent_Half
+    """
     st.header("🎥 Video Review / Bookmarks")
-    if streamlit_video_component is None:
-        st.info("Custom video component not found. The rest of the app works. Add the component file later if you want bookmarks.")
-        return
+
+    # Ensure we have videos/moments tables (should already exist from SCHEMA)
+    conn.execute("CREATE TABLE IF NOT EXISTS videos(id INTEGER PRIMARY KEY, match_id INTEGER NOT NULL, kind TEXT NOT NULL, url TEXT NOT NULL, label TEXT NOT NULL, offset REAL NOT NULL DEFAULT 0)")
+    conn.execute("CREATE TABLE IF NOT EXISTS moments(id INTEGER PRIMARY KEY, match_id INTEGER NOT NULL, video_id INTEGER NOT NULL, video_ts REAL NOT NULL, note TEXT DEFAULT '', ts TEXT NOT NULL DEFAULT (datetime('now')))")
+    conn.commit()
 
     matches = _matches_df(conn)
     if matches.empty:
-        st.info("Create or load a match in Logger first."); return
+        st.info("Create or load a match in **Live Logger** first.")
+        return
 
+    st.subheader("Select Match")
     opts = [(int(r["id"]), f"{r['date']} — {r['opponent']}") for _, r in matches.iterrows()]
     mid = st.selectbox("Match", [o[0] for o in opts], format_func=dict(opts).get, key="vid_match")
+
+    st.divider()
+    with st.expander("➕ Add YouTube video (private/unlisted link)", expanded=False):
+        c1,c2,c3 = st.columns([1,1,1])
+        date_str = c1.text_input("Date (YYYY-MM-DD)", value=str(matches.set_index("id").loc[mid, "date"]))
+        opponent = c2.text_input("Opponent", value=matches.set_index("id").loc[mid, "opponent"])
+        half     = c3.selectbox("Half", ["1stHalf","2ndHalf","Full"], index=0)
+        yt_url   = st.text_input("YouTube URL (private/unlisted)")
+        # Label format B:
+        # 2025-10-14_U18s_vs_Harlequins_1stHalf
+        team_name = st.text_input("Team label (e.g., U18s)", value="U18s")
+        if st.button("Add Video"):
+            if not yt_url.strip():
+                st.error("Paste a YouTube URL")
+            else:
+                label = f"{date_str}_{team_name}_vs_{opponent}_{half}".replace(" ", "")
+                with conn:
+                    conn.execute(
+                        "INSERT INTO videos(match_id,kind,url,label,offset) VALUES(?,?,?,?,0)",
+                        (int(mid), "youtube", yt_url.strip(), label)
+                    )
+                st.success(f"Added: {label}")
+                st.rerun()
 
     vids = pd.read_sql_query(
         "SELECT id,label,kind,url,offset FROM videos WHERE match_id=? ORDER BY id",
         conn, params=(int(mid),)
     )
-
-    with st.expander("➕ Add video (URL)"):
-        lbl = st.text_input("Label", value="Main Feed", key="vid_label")
-        url = st.text_input("Video URL (MP4/stream URL)", key="vid_url")
-        if st.button("Add URL", key="vid_add"):
-            if not url.strip(): st.error("Paste a URL.")
-            else:
-                with conn:
-                    conn.execute(
-                        "INSERT INTO videos(match_id,kind,url,label,offset) VALUES(?,?,?,?,0)",
-                        (int(mid), "url", url.strip(), lbl.strip())
-                    )
-                st.success("Added."); st.rerun()
-
     if vids.empty:
-        st.info("No videos yet."); return
+        st.info("No videos yet for this match.")
+        return
 
+    st.subheader("Active video")
     vopts = [(int(r["id"]), f"{r['label']} ({r['kind']})") for _, r in vids.iterrows()]
-    vid = st.selectbox("Active video", [o[0] for o in vopts], format_func=dict(vopts).get, key="vid_active")
-    vrow = conn.execute("SELECT id,url,offset FROM videos WHERE id=?", (int(vid),)).fetchone()
+    vid = st.selectbox("Video", [o[0] for o in vopts], format_func=dict(vopts).get, key="vid_active")
 
-    off = st.number_input("Offset (sec)", value=float(vrow["offset"] or 0.0), step=1.0, key=f"vid_off_{vid}")
+    vrow = conn.execute("SELECT id,url,offset FROM videos WHERE id=?", (int(vid),)).fetchone()
+    off  = st.number_input("Start offset (sec)", value=float(vrow["offset"] or 0.0), step=1.0, key=f"vid_off_{vid}")
     if st.button("Save offset", key=f"vid_off_save_{vid}"):
         with conn:
             conn.execute("UPDATE videos SET offset=? WHERE id=?", (float(off), int(vid)))
-        st.success("Saved."); st.rerun()
+        st.success("Saved.")
+        st.rerun()
 
-    st.subheader("Player")
-    payload = streamlit_video_component(video_url=vrow["url"], start_time=float(off))  # returns dict or None
+    # --- Layout: player left, bookmarks right ---
+    col_left, col_right = st.columns([2,1])
 
-    if payload and payload.get("type") == "bookmark":
-        t = float(payload.get("t") or 0.0)
-        note = st.session_state.get("vid_note_default","")
-        with conn:
-            conn.execute("INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
-                         (int(mid), int(vid), t, note))
-        st.toast(f"⭐ Bookmark @ {int(t)}s")
+    with col_left:
+        st.subheader("Player")
+        # Streamlit can play YT URLs directly
+        st.video(vrow["url"], start_time=int(off))
 
-    st.subheader("Default note for next bookmark")
-    st.session_state["vid_note_default"] = st.text_input(
-        "Note", value=st.session_state.get("vid_note_default",""), key="vid_note_box"
-    )
+    with col_right:
+        st.subheader("⭐ Bookmarks")
+        st.caption("Quickly add timestamps (in seconds) and a short note.")
 
-    bms = pd.read_sql_query(
-        "SELECT id,video_ts,note FROM moments WHERE match_id=? AND video_id=? ORDER BY video_ts",
-        conn, params=(int(mid), int(vid))
-    )
-    if bms.empty:
-        st.caption("Press Space in the player (component) to drop a bookmark.")
-    else:
-        for _, row in bms.iterrows():
-            c1,c2,c3,c4 = st.columns([1,5,1,1])
-            tsec = float(row["video_ts"])
-            with c1: st.write(f"{int(tsec//60):02d}:{int(tsec%60):02d}")
-            with c2:
-                new_note = st.text_input("Note", value=row["note"], key=f"bm_note_{int(row['id'])}")
-            with c3:
-                if st.button("Save", key=f"bm_save_{int(row['id'])}"):
-                    with conn:
-                        conn.execute("UPDATE moments SET note=? WHERE id=?", (new_note, int(row["id"])))
-                    st.success("Saved")
-            with c4:
-                if st.button("Delete", key=f"bm_del_{int(row['id'])}"):
-                    with conn:
-                        conn.execute("DELETE FROM moments WHERE id=?", (int(row["id"]),))
-                    st.warning("Deleted"); st.rerun()
+        c1,c2 = st.columns([1,2])
+        # Keep last used ts in session to speed data entry
+        last_ts_key = f"last_ts_{vid}"
+        default_ts = st.session_state.get(last_ts_key, 0)
+        tsec = c1.number_input("Time (s)", value=float(default_ts), step=1.0, key=f"bm_t_{vid}")
+        note = c2.text_input("Note", value="", key=f"bm_note_{vid}")
+
+        cc1,cc2,cc3 = st.columns(3)
+        if cc1.button("Add ⭐", key=f"bm_add_{vid}", use_container_width=True):
+            with conn:
+                conn.execute(
+                    "INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
+                    (int(mid), int(vid), float(tsec), note.strip())
+                )
+            st.session_state[last_ts_key] = float(tsec)  # remember last
+            st.success("Bookmark added.")
+            st.rerun()
+
+        if cc2.button("+5s", key=f"bm_plus5_{vid}", use_container_width=True):
+            st.session_state[last_ts_key] = float(default_ts) + 5.0
+            st.rerun()
+        if cc3.button("+10s", key=f"bm_plus10_{vid}", use_container_width=True):
+            st.session_state[last_ts_key] = float(default_ts) + 10.0
+            st.rerun()
+
+        # List bookmarks
+        bms = pd.read_sql_query(
+            "SELECT id,video_ts,note FROM moments WHERE match_id=? AND video_id=? ORDER BY video_ts",
+            conn, params=(int(mid), int(vid))
+        )
+        if bms.empty:
+            st.caption("No bookmarks yet.")
+        else:
+            for _, row in bms.iterrows():
+                c1,c2,c3,c4 = st.columns([1,5,1,1])
+                t = float(row["video_ts"])
+                with c1:
+                    st.write(f"{int(t//60):02d}:{int(t%60):02d}")
+                with c2:
+                    new_note = st.text_input("Note", value=row["note"], key=f"bm_note_{int(row['id'])}")
+                with c3:
+                    if st.button("Save", key=f"bm_save_{int(row['id'])}"):
+                        with conn:
+                            conn.execute("UPDATE moments SET note=? WHERE id=?", (new_note, int(row["id"])))
+                        st.success("Saved")
+                with c4:
+                    if st.button("Delete", key=f"bm_del_{int(row['id'])}"):
+                        with conn:
+                            conn.execute("DELETE FROM moments WHERE id=?", (int(row["id"]),))
+                        st.warning("Deleted"); st.rerun()
+
+            # Export CSV
+            st.divider()
+            csv = bms.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Export bookmarks (CSV)", data=csv, file_name="bookmarks.csv", mime="text/csv", use_container_width=True)
+
 
 # -------- Master router --------
 def main(conn: sqlite3.Connection, role: str):
