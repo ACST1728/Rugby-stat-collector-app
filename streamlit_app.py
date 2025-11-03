@@ -18,16 +18,20 @@ def _db_path():
 
 DB_PATH = _db_path()
 
-# ✅ Create DB connection
+# ✅ Create DB connection (idempotent)
 @st.cache_resource
 def get_conn():
     d = os.path.dirname(DB_PATH)
-    try: os.makedirs(d, exist_ok=True)
-    except Exception: pass
+    try:
+        if d and d not in ("", "/"):
+            os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
 
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
-    
+
+    # users table
     conn.execute("""
     CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY,
@@ -37,18 +41,34 @@ def get_conn():
     )
     """)
     conn.commit()
+
     ensure_admin(conn)
     return conn
 
-# ✅ Ensure default admin exists
+# ✅ Ensure default admin exists (with secret-driven reset)
 def ensure_admin(conn):
+    # Optional secure reset via Secrets: set RESET_ADMIN="true" then reload once
+    reset_flag = False
+    try:
+        if str(st.secrets.get("RESET_ADMIN", "false")).lower() == "true":
+            reset_flag = True
+    except Exception:
+        pass
+
+    if reset_flag:
+        conn.execute("DELETE FROM users")
+        conn.commit()
+
+    # Seed only if empty
     n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if n == 0:
         user = os.environ.get("APP_ADMIN_USER", "admin")
         pw   = os.environ.get("APP_ADMIN_PASS", "admin123")
         ph   = bcrypt.hashpw(pw.encode(), bcrypt.gensalt())
-        conn.execute("INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
-                     (user, ph, "admin"))
+        conn.execute(
+            "INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
+            (user, ph, "admin")
+        )
         conn.commit()
 
 # ✅ Login UI
@@ -59,8 +79,11 @@ def login(conn):
 
     if st.button("Login ✅"):
         row = conn.execute("SELECT * FROM users WHERE username=?", (u,)).fetchone()
-        if not row: return st.error("User not found")
-        if row["active"] != 1: return st.error("User inactive")
+        if not row:
+            st.error("User not found"); return
+        if row["active"] != 1:
+            st.error("User inactive"); return
+
         if bcrypt.checkpw(p.encode(), row["pass_hash"]):
             st.session_state.user = {"u": row["username"], "role": row["role"]}
             st.rerun()
