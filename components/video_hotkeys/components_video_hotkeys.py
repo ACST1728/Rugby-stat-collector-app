@@ -1,16 +1,7 @@
-import os
+# Minimal placeholder so imports succeed if you don't have the real JS build yet.
 import streamlit as st
-import streamlit.components.v1 as components
+from typing import Optional, Dict
 
-_build_dir = os.path.dirname(__file__)
-video_hotkeys = components.declare_component(
-    "video_hotkeys",
-    path=_build_dir
-)
-
-def streamlit_video_component(video_url, start_time=0):
-    return video_hotkeys(
-        video_url=video_url,
-        start_time=start_time,
-        default={}
-    )
+def streamlit_video_component(video_url: str, start_time: float = 0.0) -> Optional[Dict]:
+    st.video(video_url, start_time=int(start_time))
+    return None
