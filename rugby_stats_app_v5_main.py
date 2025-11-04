@@ -8,19 +8,65 @@ import altair as alt
 def init_db(conn):
     conn.executescript("""
     PRAGMA journal_mode=WAL;
-    CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY, name TEXT, position TEXT, active INTEGER DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS metrics(id INTEGER PRIMARY KEY, name TEXT UNIQUE, label TEXT, group_name TEXT, type TEXT DEFAULT 'count', per80 INTEGER DEFAULT 1, weight REAL, active INTEGER DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS matches(id INTEGER PRIMARY KEY, opponent TEXT, date TEXT);
-    CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, match_id INTEGER, player_id INTEGER, metric_id INTEGER, value REAL DEFAULT 1, ts TEXT DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS videos(id INTEGER PRIMARY KEY, match_id INTEGER, kind TEXT, url TEXT, label TEXT, offset REAL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS moments(id INTEGER PRIMARY KEY, match_id INTEGER, video_id INTEGER, video_ts REAL, note TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP);
-    """)
+
+    CREATE TABLE IF NOT EXISTS players(
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        position TEXT,
+        active INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS metrics(
+        id INTEGER PRIMARY KEY,
+        name TEXT UNIQUE,
+        label TEXT,
+        group_name TEXT,
+        type TEXT DEFAULT 'count',
+        per80 INTEGER DEFAULT 1,
+        weight REAL,
+        active INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS matches(
+        id INTEGER PRIMARY KEY,
+        opponent TEXT,
+        date TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS events(
+        id INTEGER PRIMARY KEY,
+        match_id INTEGER,
+        player_id INTEGER,
+        metric_id INTEGER,
+        value REAL DEFAULT 1,
+        ts TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS videos(
+        id INTEGER PRIMARY KEY,
+        match_id INTEGER,
+        kind TEXT,
+        url TEXT,
+        label TEXT,
+        offset REAL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS moments(
+        id INTEGER PRIMARY KEY,
+        match_id INTEGER,
+        video_id INTEGER,
+        video_ts REAL,
+        note TEXT,
+        ts TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS users(
-    username TEXT PRIMARY KEY,
-    pass_hash BLOB NOT NULL,
-    role TEXT NOT NULL DEFAULT 'editor',
-    active INTEGER NOT NULL DEFAULT 1
-);
+        username TEXT PRIMARY KEY,
+        pass_hash BLOB NOT NULL,
+        role TEXT NOT NULL DEFAULT 'editor',
+        active INTEGER NOT NULL DEFAULT 1
+    );
+    """)
     conn.commit()
 
 def _players_df(conn):
