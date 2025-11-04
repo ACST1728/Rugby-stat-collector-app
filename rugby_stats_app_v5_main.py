@@ -7,6 +7,7 @@ import altair as alt
 
 # ---------------- DB Helpers ----------------
 def init_db(conn):
+    conn.executescripts = getattr(conn, "executescripts", None)  # guard if env shadows
     conn.executescript("""
     PRAGMA journal_mode=WAL;
 
@@ -92,6 +93,7 @@ def init_db(conn):
     );
     """)
 
+    # Backfill column if needed
     cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)").fetchall()}
     if "team_id" not in cols:
         try:
@@ -175,7 +177,7 @@ def page_users(conn, role):
 
     st.subheader("✏️ Manage Existing User")
     if not users.empty:
-        sel = st.selectbox("User", users["username"].tolist())
+        sel = st.selectbox("User", users["username"].tolist(), key="edit_user_sel")
         r = users[users["username"]==sel].iloc[0]
         new_role = st.selectbox(
             "Role",
@@ -183,9 +185,9 @@ def page_users(conn, role):
             index=["admin","editor","viewer"].index(r["role"]),
             key=f"edit_role_{sel}"
         )
-        active = st.checkbox("Active", value=bool(r["active"]))
+        active = st.checkbox("Active", value=bool(r["active"]), key=f"edit_active_{sel}")
 
-        if st.button("Save Changes"):
+        if st.button("Save Changes", key=f"user_save_{sel}"):
             with conn:
                 conn.execute(
                     "UPDATE users SET role=?, active=? WHERE username=?",
@@ -195,8 +197,7 @@ def page_users(conn, role):
             st.rerun()
 
         temp_pw = st.text_input("Temporary Password", key=f"pwreset_{sel}", type="password")
-
-        if st.button("Reset Password"):
+        if st.button("Reset Password", key=f"pwreset_btn_{sel}"):
             if temp_pw:
                 ph = bcrypt.hashpw(temp_pw.encode(), bcrypt.gensalt())
                 with conn:
@@ -209,7 +210,7 @@ def page_my_account(conn, username):
     st.header("🔐 My Account")
 
     new_pw = st.text_input("New Password", type="password")
-    if st.button("Change Password"):
+    if st.button("Change Password", key="self_pw_change"):
         if not new_pw.strip():
             st.error("Password required")
         else:
@@ -217,6 +218,74 @@ def page_my_account(conn, username):
             with conn:
                 conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, username))
             st.success("Password updated!")
+
+
+# ---------------- PLAYERS PAGE ----------------
+def page_players(conn, role):
+    st.header("👥 Players")
+
+    df = _players_df(conn)
+    st.dataframe(df, use_container_width=True)
+
+    readonly = role not in ("admin", "editor")
+    if readonly:
+        st.info("Viewer role — read-only.")
+        return
+
+    st.subheader("➕ Add Player")
+    c1, c2, c3 = st.columns([2,1,1])
+    new_name = c1.text_input("Name", key="p_add_name")
+    new_pos  = c2.text_input("Position", key="p_add_pos", placeholder="e.g., 10 / Fly-half")
+    new_act  = c3.checkbox("Active", value=True, key="p_add_active")
+
+    if st.button("Add Player", key="p_add_btn"):
+        if not new_name.strip():
+            st.error("Name required.")
+        else:
+            with conn:
+                conn.execute(
+                    "INSERT INTO players(name,position,active) VALUES(?,?,?)",
+                    (new_name.strip(), new_pos.strip(), int(new_act))
+                )
+            st.success("Player added.")
+            st.rerun()
+
+    if df.empty:
+        st.info("No players to edit yet.")
+        return
+
+    st.subheader("✏️ Edit / Deactivate / Delete")
+    pid = st.selectbox(
+        "Select player",
+        df["id"].tolist(),
+        format_func=lambda x: df.set_index("id").loc[x, "name"],
+        key="p_edit_sel"
+    )
+    row = df[df["id"] == pid].iloc[0]
+
+    e1, e2, e3, e4 = st.columns([2,1,1,1])
+    name_edit = e1.text_input("Name", value=row["name"], key=f"p_name_{pid}")
+    pos_edit  = e2.text_input("Position", value=row["position"] or "", key=f"p_pos_{pid}")
+    act_edit  = e3.checkbox("Active", value=bool(row["active"]), key=f"p_act_{pid}")
+
+    if e4.button("Save", key=f"p_save_{pid}", use_container_width=True):
+        with conn:
+            conn.execute(
+                "UPDATE players SET name=?, position=?, active=? WHERE id=?",
+                (name_edit.strip(), pos_edit.strip(), int(act_edit), int(pid))
+            )
+        st.success("Saved.")
+        st.rerun()
+
+    dcol1, dcol2 = st.columns([1,3])
+    if dcol1.button("Delete (danger)", key=f"p_del_{pid}", use_container_width=True):
+        with conn:
+            conn.execute("DELETE FROM players WHERE id=?", (int(pid),))
+            # also clean squad membership for data integrity (optional)
+            conn.execute("DELETE FROM match_squad WHERE player_id=?", (int(pid),))
+            conn.execute("DELETE FROM team_players WHERE player_id=?", (int(pid),))
+        st.warning("Player deleted.")
+        st.rerun()
 
 
 # ---------------- TAGGING PAGE ----------------
@@ -262,10 +331,10 @@ def page_tagging(conn, role):
 
         st.subheader("⭐ Bookmark")
         ts_key = f"bm_{vid_id}"
-        t = st.number_input("Time (sec)", value=float(st.session_state.get(ts_key, 0)), step=1.0)
-        note = st.text_input("Note")
+        t = st.number_input("Time (sec)", value=float(st.session_state.get(ts_key, 0)), step=1.0, key=f"bm_t_{vid_id}")
+        note = st.text_input("Note", key=f"bm_note_{vid_id}")
 
-        if st.button("Add Bookmark"):
+        if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
             with conn:
                 conn.execute(
                     "INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
@@ -285,9 +354,8 @@ def page_tagging(conn, role):
     with col2:
         st.subheader("🏉 Log Event")
 
-        # ✅ NEW: Squad-first selector
+        # Squad-first selector (falls back to full roster)
         squad = _squad_df(conn, int(match_id))
-
         if not squad.empty:
             cur_player = st.selectbox(
                 "Player (Match Squad)",
@@ -308,7 +376,7 @@ def page_tagging(conn, role):
             cols = st.columns(3)
             grp_metrics = [m for m in metrics if m["group_name"]==grp]
             for i,m in enumerate(grp_metrics):
-                if cols[i%3].button(m["label"]):
+                if cols[i%3].button(m["label"], key=f"tag_btn_{grp}_{m['id']}"):
                     with conn:
                         conn.execute(
                             "INSERT INTO events(match_id,player_id,metric_id) VALUES(?,?,?)",
@@ -330,9 +398,11 @@ def page_tagging(conn, role):
 def main(conn, role):
     init_db(conn)
 
-    tabs = st.tabs(["👤 Users","🎥 Tagging"])
+    tabs = st.tabs(["👤 Users","👥 Players","🎥 Tagging"])
 
     with tabs[0]:
         page_users(conn, role)
     with tabs[1]:
+        page_players(conn, role)
+    with tabs[2]:
         page_tagging(conn, role)
