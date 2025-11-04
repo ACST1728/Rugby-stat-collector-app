@@ -188,19 +188,125 @@ def page_users(conn, role):
         st.success("Updated ✅")
         st.rerun()
 
+def page_players(conn, role):
+    st.header("👥 Players")
+
+    df = pd.read_sql("SELECT id,name,position,active FROM players ORDER BY name", conn)
+    st.dataframe(df, use_container_width=True)
+
+    if role not in ("admin","editor"):
+        st.info("Read-only mode")
+        return
+
+    st.subheader("➕ Add Player")
+    c1,c2 = st.columns([2,1])
+    name = c1.text_input("Player Name")
+    pos  = c2.text_input("Position")
+
+    if st.button("Add Player"):
+        if not name.strip():
+            st.error("Enter a player name")
+        else:
+            with conn:
+                conn.execute(
+                    "INSERT INTO players(name,position,active) VALUES(?,?,1)",
+                    (name.strip(), pos.strip())
+                )
+            st.success("Player added ✅")
+            st.rerun()
+
+    st.divider()
+    st.subheader("✏️ Edit Players")
+
+    if df.empty:
+        st.info("No players yet")
+        return
+
+    pid = st.selectbox("Select Player", df["id"].tolist(), format_func=lambda x: df[df["id"]==x]["name"].iloc[0])
+    rec = df[df["id"]==pid].iloc[0]
+
+    new_name = st.text_input("Name", value=rec["name"])
+    new_pos  = st.text_input("Position", value=rec["position"])
+    active   = st.checkbox("Active", value=bool(rec["active"]))
+
+    c1, c2 = st.columns(2)
+    if c1.button("Save Changes"):
+        with conn:
+            conn.execute(
+                "UPDATE players SET name=?, position=?, active=? WHERE id=?",
+                (new_name.strip(), new_pos.strip(), int(active), pid)
+            )
+        st.success("Saved ✅")
+        st.rerun()
+
+    if c2.button("Delete Player ❌"):
+        with conn:
+            conn.execute("DELETE FROM players WHERE id=?", (pid,))
+        st.warning("Player deleted")
+        st.rerun()
+
+def page_metrics(conn, role):
+    st.header("📊 Metrics")
+
+    df = pd.read_sql("SELECT id,label,group_name,per80,weight,active FROM metrics ORDER BY group_name,label", conn)
+    st.dataframe(df, use_container_width=True)
+
+    if role != "admin":
+        st.info("Admin only")
+        return
+
+    st.subheader("➕ Add Metric")
+    key = st.text_input("Metric Key (snake_case)", placeholder="dominant_tackles")
+    label = st.text_input("Display Label", placeholder="Dominant Tackles")
+    grp = st.selectbox("Group", ["Attack","Defense","Kicking","Discipline","Scoring","Other"])
+    per80 = st.checkbox("Include in per-80 stats", value=True)
+    weight = st.number_input("Weight (leaderboard)", value=0.0, step=0.5)
+
+    if st.button("Add Metric"):
+        if not key or not label:
+            st.error("Key & Label required")
+        else:
+            with conn:
+                conn.execute(
+                    "INSERT INTO metrics(name,label,group_name,type,per80,weight,active) VALUES(?,?,?,?,?,?,1)",
+                    (key.strip(), label.strip(), grp, "count", int(per80), float(weight))
+                )
+            st.success("Metric added ✅")
+            st.rerun()
+
+    st.divider()
+    st.subheader("✏️ Edit Metrics")
+
+    if df.empty:
+        st.info("No metrics yet")
+        return
+
+    mid = st.selectbox("Select Metric", df["id"].tolist(), format_func=lambda x: df[df["id"]==x]["label"].iloc[0])
+    rec = df[df["id"]==mid].iloc[0]
+
+    new_label = st.text_input("Label", value=rec["label"])
+    new_grp   = st.selectbox("Group", ["Attack","Defense","Kicking","Discipline","Scoring","Other"], index=["Attack","Defense","Kicking","Discipline","Scoring","Other"].index(rec["group_name"]))
+    new_per80 = st.checkbox("Per-80", value=bool(rec["per80"]))
+    new_active= st.checkbox("Active", value=bool(rec["active"]))
+    new_weight= st.number_input("Weight", value=float(rec["weight"] or 0.0), step=0.5)
+
+    if st.button("Save Metric"):
+        with conn:
+            conn.execute(
+                "UPDATE metrics SET label=?, group_name=?, per80=?, active=?, weight=? WHERE id=?",
+                (new_label.strip(), new_grp, int(new_per80), int(new_active), float(new_weight), mid)
+            )
+        st.success("Saved ✅")
+        st.rerun()
+
 def main(conn, role):
     init_db(conn)
-   tabs = st.tabs(["👥 Users","⚙️ Setup","📊 Reports","🎥 Tagging"])
+   tabs = st.tabs(["👤 Users","👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
 
 
-    with tabs[0]:
-    page_users(conn, role)
 
-with tabs[1]:
-    st.write("Setup pages coming soon (Players, Metrics)")
-
-with tabs[2]:
-    st.write("Reports coming soon")
-
-with tabs[3]:
-    page_tagging(conn, role)
+    with tabs[0]: page_users(conn, role)
+with tabs[1]: page_players(conn, role)
+with tabs[2]: page_metrics(conn, role)
+with tabs[3]: page_tagging(conn, role)
+with tabs[4]: st.write("Reports coming soon")
