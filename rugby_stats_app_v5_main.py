@@ -97,7 +97,7 @@ def page_users(conn, role):
     st.subheader("➕ Add User")
     new_user = st.text_input("Username")
     new_pass = st.text_input("Password", type="password")
-    new_role = st.selectbox("Role", ["admin","editor","viewer"])
+    new_role = st.selectbox("Role", ["admin","editor","viewer"], key="create_role")
 
     if st.button("Create User"):
         if not new_user.strip() or not new_pass.strip():
@@ -119,7 +119,12 @@ def page_users(conn, role):
     if not users.empty:
         sel = st.selectbox("User", users["username"].tolist())
         r = users[users["username"]==sel].iloc[0]
-        new_role = st.selectbox("Role", ["admin","editor","viewer"], index=["admin","editor","viewer"].index(r["role"]))
+        new_role = st.selectbox(
+    "Role",
+    ["admin","editor","viewer"],
+    index=["admin","editor","viewer"].index(r["role"]),
+    key=f"edit_role_{sel}"
+)
         active = st.checkbox("Active", value=bool(r["active"]))
 
         if st.button("Save Changes"):
@@ -131,8 +136,8 @@ def page_users(conn, role):
             st.success("Updated")
             st.rerun()
 
-        if st.button("Reset Password"):
-            temp_pw = st.text_input("Temporary Password", key="tmp_pw", type="password")
+        temp_pw = st.text_input("Temporary Password", key=f"pwreset_{sel}", type="password")
+if st.button("Reset Password"):
             if temp_pw:
                 ph = bcrypt.hashpw(temp_pw.encode(), bcrypt.gensalt())
                 with conn:
