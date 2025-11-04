@@ -290,6 +290,72 @@ def page_my_account(conn, username):
                 conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, username))
             st.success("Password updated!")
 
+# ---------------- MATCH MANAGEMENT ----------------
+def page_matches(conn, role):
+    st.header("🗓️ Match Manager")
+
+    if role not in ("admin","editor"):
+        st.info("Viewer mode — only admins/editors can create matches.")
+
+    teams = pd.read_sql("SELECT id, name FROM teams ORDER BY name", conn)
+    matches = pd.read_sql("SELECT id, opponent, date, team_id FROM matches ORDER BY date DESC, id DESC", conn)
+
+    st.subheader("📋 Existing Matches")
+    if matches.empty:
+        st.info("No matches yet — add one below.")
+    else:
+        def _fmt_team(x):
+            if pd.isna(x): return ""
+            return teams.set_index("id").loc[int(x),"name"] if int(x) in teams["id"].tolist() else ""
+        show = matches.copy()
+        show["team"] = show["team_id"].apply(_fmt_team)
+        st.dataframe(show[["date","opponent","team"]], use_container_width=True)
+
+    st.divider()
+    st.subheader("➕ Create Match")
+
+    opponent = st.text_input("Opponent")
+    date = st.date_input("Match Date")
+    team_id = None
+    if not teams.empty:
+        assign_team = st.checkbox("Assign a team now?")
+        if assign_team:
+            team_id = st.selectbox(
+                "Team",
+                teams["id"].tolist(),
+                format_func=lambda x: teams.set_index("id").loc[x,"name"]
+            )
+
+    if st.button("Create Match", disabled=role not in ("admin","editor")):
+        if not opponent.strip():
+            st.error("Opponent required.")
+        else:
+            with conn:
+                conn.execute(
+                    "INSERT INTO matches(opponent, date, team_id) VALUES(?,?,?)",
+                    (opponent.strip(), str(date), team_id)
+                )
+            st.success("Match created ✅")
+            st.rerun()
+
+    if not matches.empty and role in ("admin","editor"):
+        st.divider()
+        st.subheader("🗑️ Delete a Match")
+        del_id = st.selectbox(
+            "Select Match to Delete",
+            matches["id"].tolist(),
+            format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+        )
+        if st.button("Delete Match"):
+            with conn:
+                conn.execute("DELETE FROM matches WHERE id=?", (del_id,))
+                conn.execute("DELETE FROM match_squad WHERE match_id=?", (del_id,))
+                conn.execute("DELETE FROM events WHERE match_id=?", (del_id,))
+                conn.execute("DELETE FROM videos WHERE match_id=?", (del_id,))
+                conn.execute("DELETE FROM moments WHERE match_id=?", (del_id,))
+            st.warning("Match deleted ⚠️")
+            st.rerun()
+
 
 # ---------------- PLAYERS PAGE ----------------
 def page_players(conn, role):
@@ -469,11 +535,17 @@ def page_tagging(conn, role):
 def main(conn, role):
     init_db(conn)
 
-    tabs = st.tabs(["👤 Users","👥 Players","🎥 Tagging"])
+    tabs = st.tabs(["👤 Users","👥 Players","📊 Metrics","🗓️ Matches","🏟️ Teams","🎥 Tagging","📈 Reports"])
 
     with tabs[0]:
         page_users(conn, role)
     with tabs[1]:
         page_players(conn, role)
     with tabs[2]:
-        page_tagging(conn, role)
+    page_matches(conn, role)
+with tabs[3]:
+    page_teams(conn, role)
+with tabs[4]:
+    page_tagging(conn, role)
+with tabs[5]:
+    page_reports(conn, role)
