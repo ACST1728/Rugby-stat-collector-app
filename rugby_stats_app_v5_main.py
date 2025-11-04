@@ -15,6 +15,12 @@ def init_db(conn):
     CREATE TABLE IF NOT EXISTS videos(id INTEGER PRIMARY KEY, match_id INTEGER, kind TEXT, url TEXT, label TEXT, offset REAL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS moments(id INTEGER PRIMARY KEY, match_id INTEGER, video_id INTEGER, video_ts REAL, note TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP);
     """)
+    CREATE TABLE IF NOT EXISTS users(
+    username TEXT PRIMARY KEY,
+    pass_hash BLOB NOT NULL,
+    role TEXT NOT NULL DEFAULT 'editor',
+    active INTEGER NOT NULL DEFAULT 1
+);
     conn.commit()
 
 def _players_df(conn):
@@ -130,15 +136,71 @@ def page_tagging(conn, role):
         st.dataframe(recent, use_container_width=True)
 
 # ---------------- Main App Router ----------------
+import bcrypt
+
+def page_users(conn, role):
+    st.header("👤 User Management")
+
+    if role != "admin":
+        st.info("Admin only.")
+        return
+
+    st.subheader("Add New User")
+    c1, c2 = st.columns(2)
+    new_user = c1.text_input("Username")
+    new_pass = c2.text_input("Password", type="password")
+    new_role = st.selectbox("Role", ["admin", "editor", "viewer"])
+
+    if st.button("Create User"):
+        if not new_user or not new_pass:
+            st.error("Enter username and password")
+        else:
+            ph = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt())
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO users(username, pass_hash, role, active) VALUES(?,?,?,1)",
+                        (new_user, ph, new_role)
+                    )
+                st.success(f"User {new_user} created")
+                st.rerun()
+            except:
+                st.error("Username already exists")
+
+    st.divider()
+    st.subheader("Manage Users")
+
+    df = pd.read_sql("SELECT username, role, active FROM users", conn)
+    st.dataframe(df, use_container_width=True)
+
+    sel = st.selectbox("Select user", df["username"].tolist())
+    new_role2 = st.selectbox("Change role", ["admin","editor","viewer"])
+    new_active = st.checkbox("Active", value=bool(df.set_index("username").loc[sel,"active"]))
+    reset_pass = st.text_input("Reset Password", type="password")
+
+    if st.button("Save Changes"):
+        with conn:
+            conn.execute("UPDATE users SET role=?, active=? WHERE username=?",
+                         (new_role2, int(new_active), sel))
+            if reset_pass.strip():
+                ph = bcrypt.hashpw(reset_pass.encode(), bcrypt.gensalt())
+                conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, sel))
+        st.success("Updated ✅")
+        st.rerun()
+
 def main(conn, role):
     init_db(conn)
-    tabs = st.tabs(["⚙️ Setup","📊 Reports","🎥 Tagging"])
+   tabs = st.tabs(["👥 Users","⚙️ Setup","📊 Reports","🎥 Tagging"])
+
 
     with tabs[0]:
-        st.write("Setup pages coming soon (Players, Metrics, Users)")
+    page_users(conn, role)
 
-    with tabs[1]:
-        st.write("Reports coming soon")
+with tabs[1]:
+    st.write("Setup pages coming soon (Players, Metrics)")
 
-    with tabs[2]:
-        page_tagging(conn, role)
+with tabs[2]:
+    st.write("Reports coming soon")
+
+with tabs[3]:
+    page_tagging(conn, role)
