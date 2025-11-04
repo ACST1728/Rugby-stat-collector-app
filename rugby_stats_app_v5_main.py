@@ -377,9 +377,39 @@ def main(conn, role):
     init_user_table(conn)
 
 
-    tabs = st.tabs(["👤 Users","👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
+    tabs = st.tabs(["🛠 My Account","👤 Users","👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
 
     with tabs[0]:
+    st.header("🛠 My Account")
+
+    st.subheader("Change Password")
+    current_pw = st.text_input("Current Password", type="password")
+    new_pw = st.text_input("New Password", type="password")
+    confirm_pw = st.text_input("Confirm New Password", type="password")
+
+    if st.button("Update Password"):
+        user = st.session_state.user["username"]
+        row = conn.execute("SELECT password_hash FROM users WHERE username=?", (user,)).fetchone()
+
+        if not row:
+            st.error("User not found.")
+        else:
+            stored_hash = row["password_hash"]
+
+            if not bcrypt.checkpw(current_pw.encode(), stored_hash.encode()):
+                st.error("❌ Current password incorrect.")
+            elif new_pw != confirm_pw:
+                st.error("❌ New passwords don't match.")
+            elif len(new_pw) < 6:
+                st.error("⚠️ New password must be at least 6 characters.")
+            else:
+                new_hash = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
+                conn.execute("UPDATE users SET password_hash=? WHERE username=?", (new_hash, user))
+                conn.commit()
+                st.success("✅ Password updated successfully!")
+                st.toast("Password changed 🚀", icon="🔐")
+
+    with tabs[1]:
     if role != "admin":
         st.error("Admins only")
     else:
@@ -419,11 +449,11 @@ def main(conn, role):
             conn.commit()
             st.success(f"User {du} deactivated")
 
-    with tabs[1]:
+    with tabs[2]:
         st.write("Metrics settings coming soon")
 
-    with tabs[2]:
+    with tabs[3]:
         page_tagging(conn, role)
 
-    with tabs[3]:
+    with tabs[4]:
         st.write("Reports coming soon")
