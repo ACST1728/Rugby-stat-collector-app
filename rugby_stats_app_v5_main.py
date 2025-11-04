@@ -59,15 +59,9 @@ def init_db(conn):
         note TEXT,
         ts TEXT DEFAULT CURRENT_TIMESTAMP
     );
-
-    CREATE TABLE IF NOT EXISTS users(
-        username TEXT PRIMARY KEY,
-        pass_hash BLOB NOT NULL,
-        role TEXT NOT NULL DEFAULT 'editor',
-        active INTEGER NOT NULL DEFAULT 1
-    );
     """)
     conn.commit()
+
 
 def _players_df(conn):
     return pd.read_sql("SELECT id,name,position,active FROM players ORDER BY name", conn)
@@ -347,12 +341,17 @@ def page_metrics(conn, role):
 
 def main(conn, role):
     init_db(conn)
-   tabs = st.tabs(["👤 Users","👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
 
+    tabs = st.tabs(["👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
 
+    with tabs[0]:
+        st.write("Players settings coming soon")
 
-    with tabs[0]: page_users(conn, role)
-with tabs[1]: page_players(conn, role)
-with tabs[2]: page_metrics(conn, role)
-with tabs[3]: page_tagging(conn, role)
-with tabs[4]: st.write("Reports coming soon")
+    with tabs[1]:
+        st.write("Metrics settings coming soon")
+
+    with tabs[2]:
+        page_tagging(conn, role)
+
+    with tabs[3]:
+        st.write("Reports coming soon")
