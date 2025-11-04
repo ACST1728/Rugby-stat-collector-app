@@ -3,6 +3,7 @@ import sqlite3, datetime as dt
 import pandas as pd
 import streamlit as st
 import altair as alt
+import bcrypt
 
 # ---------------- DB Helpers ----------------
 def init_db(conn):
@@ -74,6 +75,38 @@ def _metrics_df(conn, only_active=False):
 
 def _matches_df(conn):
     return pd.read_sql("SELECT id,opponent,date FROM matches ORDER BY date DESC,id DESC", conn)
+
+# ---------------- USERS DB ----------------
+def init_user_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('admin','editor','viewer')),
+            active INTEGER NOT NULL DEFAULT 1
+        )
+    """)
+    # ✅ ensure at least one admin exists
+    admin_exists = conn.execute("SELECT 1 FROM users WHERE role='admin' AND active=1").fetchone()
+    if not admin_exists:
+        pw = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
+        conn.execute("INSERT INTO users(username,password_hash,role,active) VALUES(?,?,?,1)",
+                     ("admin", pw, "admin"))
+    conn.commit()
+
+def create_user(conn, username, password, role):
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    conn.execute(
+        "INSERT INTO users(username,password_hash,role,active) VALUES(?,?,?,1)",
+        (username, pw_hash, role)
+    )
+    conn.commit()
+
+def reset_password(conn, username, new_password):
+    pw_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    conn.execute("UPDATE users SET password_hash=? WHERE username=?", (pw_hash, username))
+    conn.commit()
 
 # ---------------- Combined Tagging Page ----------------
 def page_tagging(conn, role):
@@ -341,11 +374,50 @@ def page_metrics(conn, role):
 
 def main(conn, role):
     init_db(conn)
+    init_user_table(conn)
 
-    tabs = st.tabs(["👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
+
+    tabs = st.tabs(["👤 Users","👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
 
     with tabs[0]:
-        st.write("Players settings coming soon")
+    if role != "admin":
+        st.error("Admins only")
+    else:
+        st.header("👤 User Management")
+
+        # List users
+        users = pd.read_sql("SELECT username, role, active FROM users", conn)
+        st.dataframe(users, use_container_width=True)
+
+        st.subheader("➕ Add User")
+        nu = st.text_input("Username")
+        npw = st.text_input("Password", type="password")
+        nrole = st.selectbox("Role", ["admin","editor","viewer"])
+        if st.button("Create user"):
+            if nu.strip() and npw.strip():
+                try:
+                    create_user(conn, nu.strip(), npw, nrole)
+                    st.success(f"User {nu} created")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+        st.subheader("🔁 Reset Password")
+        ru = st.text_input("User to reset")
+        rpw = st.text_input("New password", type="password")
+        if st.button("Reset password"):
+            try:
+                reset_password(conn, ru.strip(), rpw)
+                st.success(f"Password reset for {ru}")
+            except:
+                st.error("User not found")
+
+        st.subheader("🚫 Deactivate User")
+        du = st.text_input("User to deactivate")
+        if st.button("Deactivate"):
+            conn.execute("UPDATE users SET active=0 WHERE username=?", (du.strip(),))
+            conn.commit()
+            st.success(f"User {du} deactivated")
 
     with tabs[1]:
         st.write("Metrics settings coming soon")
