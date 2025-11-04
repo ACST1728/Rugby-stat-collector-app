@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+import bcrypt
 import sqlite3, datetime as dt
 import pandas as pd
 import streamlit as st
 import altair as alt
-import bcrypt
+
 
 # ---------------- DB Helpers ----------------
 def init_db(conn):
@@ -379,35 +380,38 @@ def main(conn, role):
 
     tabs = st.tabs(["🛠 My Account","👤 Users","👥 Players","📊 Metrics","🎥 Tagging","📈 Reports"])
 
-    with tabs[0]:
+   with tabs[0]:
     st.header("🛠 My Account")
 
+    user = st.session_state.user["u"]  # matches your session structure
+    st.write(f"Logged in as **{user}**")
+
     st.subheader("Change Password")
-    current_pw = st.text_input("Current Password", type="password")
-    new_pw = st.text_input("New Password", type="password")
-    confirm_pw = st.text_input("Confirm New Password", type="password")
+
+    current_pw = st.text_input("Current Password", type="password", key="curpw")
+    new_pw = st.text_input("New Password", type="password", key="newpw")
+    confirm_pw = st.text_input("Confirm New Password", type="password", key="confpw")
 
     if st.button("Update Password"):
-        user = st.session_state.user["username"]
-        row = conn.execute("SELECT password_hash FROM users WHERE username=?", (user,)).fetchone()
+        row = conn.execute("SELECT pass_hash FROM users WHERE username=?", (user,)).fetchone()
 
         if not row:
-            st.error("User not found.")
+            st.error("⚠️ User not found in database.")
         else:
-            stored_hash = row["password_hash"]
+            stored_hash = row["pass_hash"]
 
-            if not bcrypt.checkpw(current_pw.encode(), stored_hash.encode()):
-                st.error("❌ Current password incorrect.")
+            if not bcrypt.checkpw(current_pw.encode(), stored_hash):
+                st.error("❌ Current password incorrect")
             elif new_pw != confirm_pw:
-                st.error("❌ New passwords don't match.")
+                st.error("❌ New passwords do not match")
             elif len(new_pw) < 6:
-                st.error("⚠️ New password must be at least 6 characters.")
+                st.error("⚠️ Password must be at least 6 characters")
             else:
-                new_hash = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
-                conn.execute("UPDATE users SET password_hash=? WHERE username=?", (new_hash, user))
+                new_hash = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt())
+                conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (new_hash, user))
                 conn.commit()
-                st.success("✅ Password updated successfully!")
-                st.toast("Password changed 🚀", icon="🔐")
+                st.success("✅ Password changed successfully!")
+                st.toast("🔐 Password updated", icon="✅")
 
     with tabs[1]:
     if role != "admin":
