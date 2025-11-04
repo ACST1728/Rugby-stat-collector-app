@@ -31,7 +31,8 @@ def init_db(conn):
     CREATE TABLE IF NOT EXISTS matches(
         id INTEGER PRIMARY KEY,
         opponent TEXT,
-        date TEXT
+        date TEXT,
+        team_id INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS events(
@@ -63,11 +64,41 @@ def init_db(conn):
 
     CREATE TABLE IF NOT EXISTS users(
         username TEXT PRIMARY KEY,
-        pass_hash BLOB NOT NULL,
-        role TEXT NOT NULL DEFAULT 'viewer',
+        pass_hash BLOB,
+        role TEXT,
+        active INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS teams(
+        id INTEGER PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
         active INTEGER NOT NULL DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS team_players(
+        id INTEGER PRIMARY KEY,
+        team_id INTEGER NOT NULL,
+        player_id INTEGER NOT NULL,
+        UNIQUE(team_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS match_squad(
+        id INTEGER PRIMARY KEY,
+        match_id INTEGER NOT NULL,
+        player_id INTEGER NOT NULL,
+        shirt_number INTEGER,
+        starting INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(match_id, player_id)
+    );
     """)
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)").fetchall()}
+    if "team_id" not in cols:
+        try:
+            conn.execute("ALTER TABLE matches ADD COLUMN team_id INTEGER;")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
 
 
@@ -81,7 +112,34 @@ def _metrics_df(conn, only_active=False):
     return pd.read_sql(q, conn)
 
 def _matches_df(conn):
-    return pd.read_sql("SELECT id,opponent,date FROM matches ORDER BY date DESC,id DESC", conn)
+    return pd.read_sql("SELECT id,opponent,date,team_id FROM matches ORDER BY date DESC,id DESC", conn)
+
+def _teams_df(conn):
+    return pd.read_sql("SELECT id,name,active FROM teams ORDER BY name", conn)
+
+def _team_players_df(conn, team_id: int):
+    return pd.read_sql("""
+        SELECT p.id, p.name, p.position, p.active
+        FROM team_players tp
+        JOIN players p ON p.id = tp.player_id
+        WHERE tp.team_id=?
+        ORDER BY p.name
+    """, conn, params=(int(team_id),))
+
+def _squad_df(conn, match_id: int):
+    return pd.read_sql("""
+        SELECT ms.player_id, p.name, p.position, ms.shirt_number, ms.starting
+        FROM match_squad ms
+        JOIN players p ON p.id=ms.player_id
+        WHERE ms.match_id=?
+        ORDER BY COALESCE(ms.shirt_number, 999), p.name
+    """, conn, params=(int(match_id),))
+
+def _match_row(conn, match_id: int):
+    r = conn.execute("SELECT id, opponent, date, team_id FROM matches WHERE id=?",
+                     (int(match_id),)).fetchone()
+    return dict(r) if r else None
+
 
 # ---------------- USER SETTINGS ----------------
 def page_users(conn, role):
@@ -120,11 +178,11 @@ def page_users(conn, role):
         sel = st.selectbox("User", users["username"].tolist())
         r = users[users["username"]==sel].iloc[0]
         new_role = st.selectbox(
-    "Role",
-    ["admin","editor","viewer"],
-    index=["admin","editor","viewer"].index(r["role"]),
-    key=f"edit_role_{sel}"
-)
+            "Role",
+            ["admin","editor","viewer"],
+            index=["admin","editor","viewer"].index(r["role"]),
+            key=f"edit_role_{sel}"
+        )
         active = st.checkbox("Active", value=bool(r["active"]))
 
         if st.button("Save Changes"):
@@ -137,12 +195,14 @@ def page_users(conn, role):
             st.rerun()
 
         temp_pw = st.text_input("Temporary Password", key=f"pwreset_{sel}", type="password")
-if st.button("Reset Password"):
+
+        if st.button("Reset Password"):
             if temp_pw:
                 ph = bcrypt.hashpw(temp_pw.encode(), bcrypt.gensalt())
                 with conn:
                     conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, sel))
                 st.success("Password reset!")
+
 
 # ---------------- SELF ACCOUNT ----------------
 def page_my_account(conn, username):
@@ -157,6 +217,7 @@ def page_my_account(conn, username):
             with conn:
                 conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, username))
             st.success("Password updated!")
+
 
 # ---------------- TAGGING PAGE ----------------
 def page_tagging(conn, role):
@@ -224,10 +285,23 @@ def page_tagging(conn, role):
     with col2:
         st.subheader("🏉 Log Event")
 
-        cur_player = st.selectbox(
-            "Player", [p["id"] for p in players],
-            format_func=lambda x: next(p["name"] for p in players if p["id"] == x)
-        )
+        # ✅ NEW: Squad-first selector
+        squad = _squad_df(conn, int(match_id))
+
+        if not squad.empty:
+            cur_player = st.selectbox(
+                "Player (Match Squad)",
+                squad["player_id"].tolist(),
+                format_func=lambda x: squad.set_index("player_id").loc[x,"name"],
+                key=f"tag_player_{match_id}"
+            )
+        else:
+            cur_player = st.selectbox(
+                "Player (All Players)",
+                [p["id"] for p in players],
+                format_func=lambda x: next(p["name"] for p in players if p["id"] == x),
+                key="tag_player_all"
+            )
 
         for grp in sorted({m["group_name"] for m in metrics}):
             st.markdown(f"**{grp}**")
@@ -251,19 +325,14 @@ def page_tagging(conn, role):
         )
         st.dataframe(recent, use_container_width=True)
 
+
 # ---------------- MAIN ROUTER ----------------
 def main(conn, role):
     init_db(conn)
 
-    username = st.session_state.user["u"]
-
-    tabs = st.tabs(["👤 Users","🔐 My Account","🎥 Tagging"])
+    tabs = st.tabs(["👤 Users","🎥 Tagging"])
 
     with tabs[0]:
         page_users(conn, role)
-
     with tabs[1]:
-        page_my_account(conn, username)
-
-    with tabs[2]:
         page_tagging(conn, role)
