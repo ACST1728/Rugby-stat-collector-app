@@ -107,6 +107,77 @@ def init_db(conn):
 def _players_df(conn):
     return pd.read_sql("SELECT id,name,position,active FROM players ORDER BY name", conn)
 
+# ---------------- METRICS SETTINGS ----------------
+def page_metrics(conn, role):
+    st.header("📊 Metrics")
+
+    if role not in ("admin", "editor"):
+        st.info("View-only access.")
+    
+    # fixed groups
+    METRIC_GROUPS = [
+        "Attack",
+        "Defense",
+        "Set Piece",
+        "Kicking",
+        "Discipline",
+        "Other"
+    ]
+
+    metrics = pd.read_sql(
+        "SELECT id, name, label, group_name, type, per80, weight, active FROM metrics ORDER BY group_name, label",
+        conn
+    )
+    st.dataframe(metrics, use_container_width=True)
+
+    st.divider()
+    st.subheader("➕ Add Metric")
+
+    name = st.text_input("Internal name (no spaces, e.g. carry, tackle_miss)").strip()
+    label = st.text_input("Display Label (e.g. Carry, Missed Tackle)").strip()
+    group = st.selectbox("Group", METRIC_GROUPS)
+    mtype = st.selectbox("Type", ["count", "value"])
+    weight = st.number_input("Weight (optional)", value=1.0)
+    
+    if st.button("Create Metric", disabled=role not in ("admin","editor")):
+        if not name or not label:
+            st.error("Name & Label required.")
+        else:
+            try:
+                with conn:
+                    conn.execute("""
+                        INSERT INTO metrics(name,label,group_name,type,per80,weight,active)
+                        VALUES (?,?,?,?,1,?,1)
+                    """, (name, label, group, mtype, weight))
+                st.success("✅ Metric added")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error("Metric name must be unique.")
+
+    st.divider()
+    st.subheader("✏️ Edit Metric")
+
+    if not metrics.empty:
+        sel = st.selectbox("Metric", metrics["id"].tolist(),
+            format_func=lambda x: metrics.set_index("id").loc[x,"label"]
+        )
+        r = metrics[metrics["id"]==sel].iloc[0]
+
+        new_label = st.text_input("Label", r["label"], key=f"ml_{sel}")
+        new_group = st.selectbox("Group", METRIC_GROUPS, index=METRIC_GROUPS.index(r["group_name"]), key=f"mg_{sel}")
+        new_active = st.checkbox("Active", value=bool(r["active"]), key=f"ma_{sel}")
+        new_weight = st.number_input("Weight", value=float(r["weight"] or 1), key=f"mw_{sel}")
+
+        if st.button("Save Metric", key=f"ms_{sel}", disabled=role not in ("admin","editor")):
+            with conn:
+                conn.execute("""
+                    UPDATE metrics
+                    SET label=?, group_name=?, weight=?, active=?
+                    WHERE id=?
+                """, (new_label, new_group, new_weight, int(new_active), sel))
+            st.success("✅ Updated")
+            st.rerun()
+
 def _metrics_df(conn, only_active=False):
     q = "SELECT id,name,label,group_name,type,per80,weight,active FROM metrics"
     if only_active: q += " WHERE active=1"
