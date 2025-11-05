@@ -535,20 +535,34 @@ def page_tagging(conn, role):
 def main(conn, role):
     init_db(conn)
 
-    tabs = st.tabs(["👤 Users","👥 Players","📊 Metrics","🗓️ Matches","🏟️ Teams","🎥 Tagging","📈 Reports"])
+    tabs = st.tabs([
+        "👤 Users",
+        "👥 Players",
+        "📊 Metrics",
+        "🗓️ Matches",
+        "🏟️ Teams",
+        "🎥 Tagging",
+        "📈 Reports"
+    ])
 
     with tabs[0]:
-    page_users(conn, role)
-with tabs[1]:
-    page_players(conn, role)
-with tabs[2]:
-    page_metrics(conn, role)
-with tabs[3]:
-    page_matches(conn, role)   # ✅ NEW
-with tabs[4]:
-    page_teams(conn, role)
-with tabs[5]:
-    page_tagging(conn, role)
-with tabs[6]:
-    page_reports(conn, role)
+        page_users(conn, role)
+
+    with tabs[1]:
+        page_players(conn, role)
+
+    with tabs[2]:
+        page_metrics(conn, role)
+
+    with tabs[3]:
+        page_matches(conn, role)   # ✅ Matches Page
+
+    with tabs[4]:
+        page_teams(conn, role)
+
+    with tabs[5]:
+        page_tagging(conn, role)
+
+    with tabs[6]:
+        page_reports(conn, role)
 
