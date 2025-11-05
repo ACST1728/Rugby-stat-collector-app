@@ -522,14 +522,20 @@ def page_tagging(conn, role):
                         )
                     st.toast(f"{m['label']} logged!", icon="✅")
 
-        recent = pd.read_sql(
-            """SELECT p.name, m.label, e.ts FROM events e
-               JOIN players p ON p.id=e.player_id
-               JOIN metrics m ON m.id=e.metric_id
-               WHERE match_id=? ORDER BY e.id DESC LIMIT 12""",
+                recent = pd.read_sql(
+            """
+            SELECT p.name, m.label, e.ts
+            FROM events e
+            JOIN players p ON p.id=e.player_id
+            JOIN metrics m ON m.id=e.metric_id
+            WHERE match_id=?
+            ORDER BY e.id DESC
+            LIMIT 12
+            """,
             conn, params=(match_id,)
         )
         st.dataframe(recent, use_container_width=True)
+
 
 
 # ---------------- MAIN ROUTER ----------------
