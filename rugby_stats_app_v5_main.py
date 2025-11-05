@@ -7,8 +7,16 @@ import altair as alt
 
 # ---------------- DB Helpers ----------------
 def init_db(conn):
-    conn.executescripts = getattr(conn, "executescripts", None)  # guard if env shadows
     conn.executescript("""
+    PRAGMA journal_mode=WAL;
+
+    CREATE TABLE IF NOT EXISTS players(
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        position TEXT,
+        active INTEGER DEFAULT 1
+    );
+    -- (rest of your table schema)
     PRAGMA journal_mode=WAL;
 
     CREATE TABLE IF NOT EXISTS players(
