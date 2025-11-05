@@ -571,6 +571,6 @@ def main(conn, role):
         page_tagging(conn, role)
 
     with tabs[6]:
-    page_reports(conn, role)
+        page_reports(conn, role)
 
 
