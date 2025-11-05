@@ -16,15 +16,6 @@ def init_db(conn):
         position TEXT,
         active INTEGER DEFAULT 1
     );
-    -- (rest of your table schema)
-    PRAGMA journal_mode=WAL;
-
-    CREATE TABLE IF NOT EXISTS players(
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        position TEXT,
-        active INTEGER DEFAULT 1
-    );
 
     CREATE TABLE IF NOT EXISTS metrics(
         id INTEGER PRIMARY KEY,
@@ -73,8 +64,8 @@ def init_db(conn):
 
     CREATE TABLE IF NOT EXISTS users(
         username TEXT PRIMARY KEY,
-        pass_hash BLOB,
-        role TEXT,
+        pass_hash BLOB NOT NULL,
+        role TEXT NOT NULL,
         active INTEGER DEFAULT 1
     );
 
@@ -100,6 +91,8 @@ def init_db(conn):
         UNIQUE(match_id, player_id)
     );
     """)
+    conn.commit()
+
 
     # Backfill column if needed
     cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)").fetchall()}
