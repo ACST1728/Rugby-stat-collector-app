@@ -567,7 +567,7 @@ def page_teams(conn, role: str):
                     conn.execute("INSERT INTO teams(name, active) VALUES(?, 1)", (new_team.strip(),))
                 _st.success("Team created.")
                 _st.rerun()
-                except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError:
                 _st.error("Team name must be unique.")
 
     # Quick edit (toggle active / rename / delete)
