@@ -459,8 +459,10 @@ def page_videos(conn, role):
     match_id = st.selectbox(
         "Match",
         matches["id"].tolist(),
-        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}",
+        key="videos_match_select"
     )
+
 
     label = st.text_input("Label", placeholder="e.g. First half vs Tigers")
     offset = st.number_input("Start offset (seconds)", value=0.0, step=1.0)
@@ -521,9 +523,12 @@ def page_tagging(conn, role):
         return
 
     match_id = st.selectbox(
-        "Match", matches["id"].tolist(),
-        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+        "Match",
+         matches["id"].tolist(),
+         format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}",
+         key="tagging_match_select"
     )
+
 
     players = _players_df(conn).to_dict("records")
     metrics = _metrics_df(conn, only_active=True).to_dict("records")
