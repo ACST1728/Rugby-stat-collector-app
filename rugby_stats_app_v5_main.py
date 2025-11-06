@@ -604,13 +604,23 @@ def page_tagging(conn, role):
             cols = st.columns(3)
             grp_metrics = [m for m in metrics if m["group_name"]==grp]
             for i,m in enumerate(grp_metrics):
-                if cols[i%3].button(m["label"], key=f"tag_btn_{grp}_{m['id']}"):
-                    with conn:
-                        conn.execute(
-                            "INSERT INTO events(match_id,player_id,metric_id) VALUES(?,?,?)",
-                            (match_id, cur_player, m["id"])
-                        )
-                    st.toast(f"{m['label']} logged!", icon="✅")
+                # Let user sync a rough timestamp to current video
+cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key="video_cur_time")
+
+for grp in sorted({m["group_name"] for m in metrics}):
+    st.markdown(f"**{grp}**")
+    cols = st.columns(3)
+    grp_metrics = [m for m in metrics if m["group_name"] == grp]
+
+    for i, m in enumerate(grp_metrics):
+        if cols[i % 3].button(m["label"], key=f"btn_{m['id']}"):
+            with conn:
+                conn.execute(
+                    "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
+                    (match_id, cur_player, m["id"], cur_time)
+                )
+            st.toast(f"{m['label']} logged at {cur_time:.1f}s", icon="✅")
+
 
                 recent = pd.read_sql(
             """
