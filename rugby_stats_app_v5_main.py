@@ -269,12 +269,14 @@ def page_users(conn, role):
             st.rerun()
 
         temp_pw = st.text_input("Temporary Password", key=f"pwreset_{sel}", type="password")
-        if st.button("Reset Password", key=f"pwreset_btn_{sel}"):
-            if temp_pw:
-                ph = bcrypt.hashpw(temp_pw.encode(), bcrypt.gensalt())
-                with conn:
-                    conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, sel))
-                st.success("Password reset!")
+
+if st.button("Reset Password"):
+    if temp_pw:
+        ph = bcrypt.hashpw(temp_pw.encode(), bcrypt.gensalt())
+        with conn:
+            conn.execute("UPDATE users SET pass_hash=? WHERE username=?", (ph, sel))
+        st.success("Password reset!")
+
 
 
 # ---------------- SELF ACCOUNT ----------------
