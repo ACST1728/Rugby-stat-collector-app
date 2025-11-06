@@ -643,7 +643,7 @@ def main(conn, role):
         page_metrics(conn, role)
 
     with tabs[3]:
-        page_matches(conn, role)   # ✅ Matches Page
+        page_matches(conn, role)
 
     with tabs[4]:
         page_teams(conn, role)
@@ -653,5 +653,3 @@ def main(conn, role):
 
     with tabs[6]:
         page_reports(conn, role)
-
-
