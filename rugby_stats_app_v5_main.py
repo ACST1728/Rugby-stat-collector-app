@@ -538,6 +538,66 @@ def page_tagging(conn, role):
         )
         st.dataframe(recent, use_container_width=True)
 
+# ---------------- TEAMS (minimal) ----------------
+def page_teams(conn, role: str):
+    import pandas as _pd
+    import streamlit as _st
+
+    _st.header("🏟️ Teams")
+
+    # Show existing teams
+    _st.subheader("Teams")
+    teams_df = _pd.read_sql("SELECT id, name, active FROM teams ORDER BY name", conn)
+    _st.dataframe(teams_df, use_container_width=True)
+
+    # View-only for non-admin/editor
+    if role not in ("admin", "editor"):
+        _st.info("Viewer mode: only admins/editors can add or edit teams.")
+        return
+
+    # Add a team
+    _st.subheader("➕ Add Team")
+    new_team = _st.text_input("Team name", placeholder="U18s, 1st XV, Academy…", key="teams_new_name")
+    if _st.button("Create Team", use_container_width=True):
+        if not new_team.strip():
+            _st.error("Enter a team name.")
+        else:
+            try:
+                with conn:
+                    conn.execute("INSERT INTO teams(name, active) VALUES(?, 1)", (new_team.strip(),))
+                _st.success("Team created.")
+                _st.rerun()
+            except sqlite3.IntegrityError:
+                _st.error("Team name must be unique.")
+
+    # Quick edit (toggle active / rename / delete)
+    _st.subheader("✏️ Edit Team")
+    if teams_df.empty:
+        _st.caption("No teams yet.")
+        return
+
+    sel_id = _st.selectbox(
+        "Select team",
+        teams_df["id"].tolist(),
+        format_func=lambda x: teams_df.set_index("id").loc[x, "name"],
+        key="teams_edit_sel",
+    )
+    row = teams_df.set_index("id").loc[sel_id]
+    c1, c2, c3 = _st.columns([2, 1, 1])
+    new_name = c1.text_input("Name", value=row["name"], key=f"teams_name_{sel_id}")
+    new_active = c2.checkbox("Active", value=bool(row["active"]), key=f"teams_active_{sel_id}")
+
+    if c3.button("Save", key=f"teams_save_{sel_id}", use_container_width=True):
+        with conn:
+            conn.execute("UPDATE teams SET name=?, active=? WHERE id=?", (new_name.strip(), int(new_active), int(sel_id)))
+        _st.success("Saved.")
+        _st.rerun()
+
+    if _st.button("Delete (danger)", key=f"teams_del_{sel_id}"):
+        with conn:
+            conn.execute("DELETE FROM teams WHERE id=?", (int(sel_id),))
+        _st.warning("Deleted.")
+        _st.rerun()
 
 
 # ---------------- MAIN ROUTER ----------------
