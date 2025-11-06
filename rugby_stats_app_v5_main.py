@@ -599,6 +599,25 @@ def page_teams(conn, role: str):
         _st.warning("Deleted.")
         _st.rerun()
 
+# ---------------- REPORTS (placeholder) ----------------
+def page_reports(conn, role):
+    import streamlit as _st
+    import pandas as _pd
+
+    _st.header("📈 Reports & Analysis")
+
+    _st.info("This section will show aggregated stats soon (per player, per match, team summaries, etc.).")
+
+    # Temporary data view
+    try:
+        events = _pd.read_sql("SELECT * FROM events ORDER BY id DESC LIMIT 50", conn)
+        if events.empty:
+            _st.caption("No events logged yet.")
+        else:
+            _st.dataframe(events, use_container_width=True)
+    except Exception as e:
+        _st.error(f"Could not load events: {e}")
+
 
 # ---------------- MAIN ROUTER ----------------
 def main(conn, role):
