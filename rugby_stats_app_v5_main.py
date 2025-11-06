@@ -427,6 +427,89 @@ def page_players(conn, role):
         st.warning("Player deleted.")
         st.rerun()
 
+# ---------------- VIDEO MANAGEMENT ----------------
+import os
+from pathlib import Path
+
+def page_videos(conn, role):
+    st.header("🎬 Video Manager")
+
+    matches = _matches_df(conn)
+    if matches.empty:
+        st.warning("No matches found — create one first in Matches tab.")
+        return
+
+    # --- Existing videos list
+    vids = pd.read_sql("""
+        SELECT v.id, m.date, m.opponent, v.label, v.kind, v.url, v.offset
+        FROM videos v
+        JOIN matches m ON v.match_id = m.id
+        ORDER BY m.date DESC, v.id DESC
+    """, conn)
+
+    if not vids.empty:
+        st.subheader("Existing Videos")
+        st.dataframe(vids, use_container_width=True)
+    else:
+        st.caption("No videos yet.")
+
+    st.divider()
+    st.subheader("➕ Add New Video")
+
+    match_id = st.selectbox(
+        "Match",
+        matches["id"].tolist(),
+        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+    )
+
+    label = st.text_input("Label", placeholder="e.g. First half vs Tigers")
+    offset = st.number_input("Start offset (seconds)", value=0.0, step=1.0)
+
+    mode = st.radio("Video source", ["🔗 Paste URL", "📁 Upload MP4"])
+
+    # --- Option 1: Paste URL (YouTube, MP4 link, etc.)
+    if mode == "🔗 Paste URL":
+        url = st.text_input("Video URL")
+        if st.button("Add Video"):
+            if not label.strip() or not url.strip():
+                st.error("Enter both label and URL.")
+            else:
+                kind = "youtube" if "youtu" in url.lower() else "mp4"
+                with conn:
+                    conn.execute(
+                        "INSERT INTO videos(match_id,kind,url,label,offset) VALUES(?,?,?,?,?)",
+                        (match_id, kind, url.strip(), label.strip(), offset)
+                    )
+                st.success("Video added from URL!")
+                st.rerun()
+
+    # --- Option 2: Upload MP4 file
+    else:
+        upload = st.file_uploader("Choose MP4 file", type=["mp4"])
+        if upload and st.button("Upload Video"):
+            if not label.strip():
+                st.error("Enter a label for this video.")
+            else:
+                # Ensure video folder exists
+                vid_dir = Path("videos")
+                vid_dir.mkdir(exist_ok=True)
+
+                # Save file
+                safe_name = f"{match_id}_{label.replace(' ', '_')}.mp4"
+                save_path = vid_dir / safe_name
+                with open(save_path, "wb") as f:
+                    f.write(upload.read())
+
+                local_url = str(save_path)
+                with conn:
+                    conn.execute(
+                        "INSERT INTO videos(match_id,kind,url,label,offset) VALUES(?,?,?,?,?)",
+                        (match_id, "mp4", local_url, label.strip(), offset)
+                    )
+
+                st.success(f"Video uploaded and saved to {save_path}")
+                st.rerun()
+
 
 # ---------------- TAGGING PAGE ----------------
 def page_tagging(conn, role):
@@ -624,14 +707,15 @@ def main(conn, role):
     init_db(conn)
 
     tabs = st.tabs([
-        "👤 Users",
-        "👥 Players",
-        "📊 Metrics",
-        "🗓️ Matches",
-        "🏟️ Teams",
-        "🎥 Tagging",
-        "📈 Reports"
-    ])
+    "👤 Users",
+    "👥 Players",
+    "📊 Metrics",
+    "🗓️ Matches",
+    "🏟️ Teams",
+    "🎬 Videos",    # 👈 new
+    "🎥 Tagging",
+    "📈 Reports"
+])
 
     with tabs[0]:
         page_users(conn, role)
@@ -649,7 +733,10 @@ def main(conn, role):
         page_teams(conn, role)
 
     with tabs[5]:
-        page_tagging(conn, role)
+        page_videos(conn, role)      # 👈 new tab
 
     with tabs[6]:
+        page_tagging(conn, role)
+
+    with tabs[7]:
         page_reports(conn, role)
