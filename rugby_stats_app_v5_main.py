@@ -643,26 +643,44 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- Right column: event logging ---
-    with col2:
-        st.subheader("🏉 Log Event")
+       with col2:
+        st.subheader("🏉 Cascade Tagging")
 
-        # Prefer match squad if available
+        # Get squad or fallback to full player list
         squad = _squad_df(conn, int(match_id))
-        if not squad.empty:
-            cur_player = st.selectbox(
-                "Player (Match Squad)",
-                squad["player_id"].tolist(),
-                format_func=lambda x: squad.set_index("player_id").loc[x, "name"],
-                key=f"tag_player_{match_id}"
-            )
-        else:
-            cur_player = st.selectbox(
-                "Player (All Players)",
-                [p["id"] for p in players],
-                format_func=lambda x: next(p["name"] for p in players if p["id"] == x),
-                key="tag_player_all"
-            )
+        available_players = (
+            squad[["player_id", "name"]].rename(columns={"player_id": "id"})
+            if not squad.empty else
+            pd.DataFrame(players)
+        )
+
+        # Step 1️⃣ — Pick a Category (group_name)
+        categories = sorted({m["group_name"] for m in metrics})
+        selected_cat = st.selectbox("Category", categories, key=f"cat_{match_id}")
+
+        # Step 2️⃣ — Pick a Metric within that Category
+        cat_metrics = [m for m in metrics if m["group_name"] == selected_cat]
+        selected_metric_label = st.selectbox(
+            "Metric",
+            [m["label"] for m in cat_metrics],
+            key=f"metric_{match_id}"
+        )
+        selected_metric = next((m for m in cat_metrics if m["label"] == selected_metric_label), None)
+
+        # Step 3️⃣ — Pick Player and log
+        cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
+
+        cols = st.columns(4)
+        for i, row in enumerate(available_players.itertuples()):
+            if cols[i % 4].button(row.name, key=f"tag_{row.id}_{selected_metric['id']}"):
+                with conn:
+                    conn.execute(
+                        "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
+                        (match_id, row.id, selected_metric["id"], cur_time)
+                    )
+                st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
+                st.session_state["last_tagged"] = (row.name, selected_metric["label"])
+
 
         # Let user sync rough video time
         cur_time = st.number_input(
