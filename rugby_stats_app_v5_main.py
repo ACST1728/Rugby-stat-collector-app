@@ -209,6 +209,64 @@ def _squad_df(conn, match_id: int):
         ORDER BY COALESCE(ms.shirt_number, 999), p.name
     """, conn, params=(int(match_id),))
 
+# ---------------- VIDEO UPLOAD / MANAGEMENT ----------------
+import os
+
+def page_videos(conn, role):
+    st.header("🎞️ Match Videos")
+
+    matches = _matches_df(conn)
+    if matches.empty:
+        st.warning("Please create a match first.")
+        return
+
+    match_id = st.selectbox(
+        "Select match",
+        matches["id"].tolist(),
+        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+    )
+
+    st.divider()
+    st.subheader("📤 Upload Video (MP4)")
+
+    uploaded_file = st.file_uploader("Upload MP4", type=["mp4"], key="video_uploader")
+
+    if uploaded_file is not None:
+        # Save uploaded video to local mount (persistent for Streamlit Cloud or local runs)
+        os.makedirs("/mnt/data/videos", exist_ok=True)
+        save_path = os.path.join("/mnt/data/videos", uploaded_file.name)
+
+        with open(save_path, "wb") as f:
+            f.write(uploaded_file.read())
+
+        label = st.text_input("Label", value=uploaded_file.name)
+        offset = st.number_input("Start Offset (seconds)", value=0.0, step=0.5)
+
+        if st.button("Save Video Info"):
+            with conn:
+                conn.execute(
+                    "INSERT INTO videos(match_id, label, url, offset) VALUES (?, ?, ?, ?)",
+                    (match_id, label.strip(), save_path, offset)
+                )
+            st.success(f"Video '{label}' saved for match!")
+            st.rerun()
+
+    st.divider()
+    st.subheader("🎦 Existing Videos")
+
+    vids = pd.read_sql(
+        "SELECT id, label, url, offset FROM videos WHERE match_id=? ORDER BY id",
+        conn, params=(match_id,)
+    )
+
+    if vids.empty:
+        st.info("No videos uploaded yet.")
+    else:
+        for _, v in vids.iterrows():
+            st.markdown(f"**{v['label']}** — Offset: {v['offset']}s")
+            st.video(v["url"])
+
+
 def _match_row(conn, match_id: int):
     r = conn.execute("SELECT id, opponent, date, team_id FROM matches WHERE id=?",
                      (int(match_id),)).fetchone()
