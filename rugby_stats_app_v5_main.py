@@ -637,7 +637,7 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- RIGHT: Tagging Cascade + Squad ---
+    # --- RIGHT: Tagging Cascade + Squad + Sub Timeline ---
     with col2:
         st.subheader("🏉 Quick Cascade Tagging")
 
@@ -694,7 +694,6 @@ def page_tagging(conn, role):
         st.divider()
         st.subheader("🧢 Matchday Squad Manager")
 
-        # Ensure substitutions table exists
         conn.execute("""
             CREATE TABLE IF NOT EXISTS substitutions(
                 id INTEGER PRIMARY KEY,
@@ -736,7 +735,6 @@ def page_tagging(conn, role):
                         conn.execute("DELETE FROM match_squad WHERE match_id=? AND player_id=?", (match_id, r["player_id"]))
                     st.rerun()
 
-                # Log substitution changes
                 if active != bool(r["starting"]):
                     action = "ON" if active else "OFF"
                     with conn:
@@ -744,6 +742,23 @@ def page_tagging(conn, role):
                                      (match_id, r["player_id"], action))
                         conn.execute("UPDATE match_squad SET starting=? WHERE match_id=? AND player_id=?",
                                      (int(active), match_id, r["player_id"]))
+
+        # --- Substitution Timeline Viewer ---
+        st.markdown("### ⏱️ Substitution Timeline")
+        subs = pd.read_sql(
+            """
+            SELECT p.name AS player, s.action, s.ts
+            FROM substitutions s
+            JOIN players p ON p.id=s.player_id
+            WHERE s.match_id=?
+            ORDER BY s.id DESC
+            """,
+            conn, params=(match_id,)
+        )
+        if subs.empty:
+            st.caption("No substitutions recorded yet.")
+        else:
+            st.dataframe(subs, use_container_width=True, hide_index=True)
 
         # --- Recent Tags ---
         st.divider()
