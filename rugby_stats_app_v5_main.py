@@ -618,12 +618,7 @@ def page_tagging(conn, role):
 
         st.subheader("⭐ Bookmark Moment")
         ts_key = f"bm_{vid_id}"
-        t = st.number_input(
-            "Time (sec)",
-            value=float(st.session_state.get(ts_key, 0)),
-            step=1.0,
-            key=f"bm_t_{vid_id}"
-        )
+        t = st.number_input("Time (sec)", value=float(st.session_state.get(ts_key, 0)), step=1.0, key=f"bm_t_{vid_id}")
         note = st.text_input("Note", key=f"bm_note_{vid_id}")
         if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
             with conn:
@@ -642,52 +637,13 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- RIGHT: Squad + Tagging ---
+    # --- RIGHT: Tagging Cascade + Squad ---
     with col2:
-        st.subheader("🧢 Matchday Squad Manager")
-
-        # --- Load or create squad for this match ---
-        squad = _squad_df(conn, int(match_id))
-        all_players = _players_df(conn)
-
-        if squad.empty:
-            st.info("No matchday squad yet. Select players to create one:")
-            to_add = st.multiselect(
-                "Add Players",
-                all_players["id"].tolist(),
-                format_func=lambda x: all_players.set_index("id").loc[x, "name"],
-                key=f"squad_add_{match_id}"
-            )
-            if st.button("💾 Save Squad", key=f"squad_save_{match_id}") and to_add:
-                with conn:
-                    for pid in to_add:
-                        conn.execute(
-                            "INSERT OR IGNORE INTO match_squad(match_id, player_id, starting) VALUES(?,?,1)",
-                            (match_id, pid)
-                        )
-                st.success("Matchday squad created!")
-                st.rerun()
-        else:
-            st.caption("Toggle players currently on the field (subs can be turned off/on live):")
-            for _, r in squad.iterrows():
-                colA, colB, colC = st.columns([3, 1, 1])
-                colA.write(r["name"])
-                active = colB.toggle("On Field", value=bool(r["starting"]), key=f"squad_active_{r['player_id']}")
-                if colC.button("❌", key=f"squad_rm_{r['player_id']}", use_container_width=True):
-                    with conn:
-                        conn.execute("DELETE FROM match_squad WHERE match_id=? AND player_id=?", (match_id, r["player_id"]))
-                    st.rerun()
-                # Update live active status
-                with conn:
-                    conn.execute("UPDATE match_squad SET starting=? WHERE match_id=? AND player_id=?", (int(active), match_id, r["player_id"]))
-
-        st.divider()
         st.subheader("🏉 Quick Cascade Tagging")
 
-        # --- Available players = active (on-field) only ---
+        # --- Filter players (active on field if available) ---
         squad = _squad_df(conn, int(match_id))
         if squad.empty:
-            st.warning("No squad defined — showing all players.")
             available_players = pd.DataFrame(players)
         else:
             on_field = squad[squad["starting"] == 1]
@@ -696,7 +652,6 @@ def page_tagging(conn, role):
                 st.warning("No players currently marked as on-field.")
                 return
 
-        # --- Cascade Buttons: Category → Metric → Player ---
         cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
 
         # Step 1️⃣: Category
@@ -735,7 +690,63 @@ def page_tagging(conn, role):
                         )
                     st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
 
+        # --- Matchday Squad Manager (below cascade) ---
+        st.divider()
+        st.subheader("🧢 Matchday Squad Manager")
+
+        # Ensure substitutions table exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS substitutions(
+                id INTEGER PRIMARY KEY,
+                match_id INTEGER,
+                player_id INTEGER,
+                action TEXT,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        all_players = _players_df(conn)
+        squad = _squad_df(conn, int(match_id))
+
+        if squad.empty:
+            st.info("No squad yet. Add players below:")
+            to_add = st.multiselect(
+                "Add Players",
+                all_players["id"].tolist(),
+                format_func=lambda x: all_players.set_index("id").loc[x, "name"],
+                key=f"squad_add_{match_id}"
+            )
+            if st.button("💾 Save Squad", key=f"squad_save_{match_id}") and to_add:
+                with conn:
+                    for pid in to_add:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO match_squad(match_id, player_id, starting) VALUES(?,?,1)",
+                            (match_id, pid)
+                        )
+                st.success("Squad created!")
+                st.rerun()
+        else:
+            st.caption("Toggle players currently on field (auto-logs subs):")
+            for _, r in squad.iterrows():
+                colA, colB, colC = st.columns([3, 1, 1])
+                colA.write(r["name"])
+                active = colB.toggle("On Field", value=bool(r["starting"]), key=f"squad_active_{r['player_id']}")
+                if colC.button("❌", key=f"squad_rm_{r['player_id']}", use_container_width=True):
+                    with conn:
+                        conn.execute("DELETE FROM match_squad WHERE match_id=? AND player_id=?", (match_id, r["player_id"]))
+                    st.rerun()
+
+                # Log substitution changes
+                if active != bool(r["starting"]):
+                    action = "ON" if active else "OFF"
+                    with conn:
+                        conn.execute("INSERT INTO substitutions(match_id,player_id,action) VALUES(?,?,?)",
+                                     (match_id, r["player_id"], action))
+                        conn.execute("UPDATE match_squad SET starting=? WHERE match_id=? AND player_id=?",
+                                     (int(active), match_id, r["player_id"]))
+
         # --- Recent Tags ---
+        st.divider()
         st.markdown("### 🕒 Recent Tags")
         recent = pd.read_sql(
             """
