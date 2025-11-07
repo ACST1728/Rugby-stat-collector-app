@@ -566,6 +566,84 @@ def page_tagging(conn, role):
             step=1.0,
             key=f"bm_t_{vid_id}"
         )
+        note = st.text_input("Note", key=f"bm_note_{vid_id}")
+
+        if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
+            with conn:
+                conn.execute(
+                    "INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
+                    (match_id, vid_id, float(t), note.strip())
+                )
+            st.session_state[ts_key] = float(t)
+            st.success("Bookmark saved!")
+            st.rerun()
+
+        bms = pd.read_sql(
+            "SELECT video_ts,note FROM moments WHERE match_id=? AND video_id=? ORDER BY video_ts",
+            conn, params=(match_id, vid_id)
+        )
+        if not bms.empty:
+            st.dataframe(bms, use_container_width=True)
+
+    # --- Right column: event logging ---
+    with col2:
+        st.subheader("🏉 Log Event")
+
+        # Prefer match squad if available
+        squad = _squad_df(conn, int(match_id))
+        if not squad.empty:
+            cur_player = st.selectbox(
+                "Player (Match Squad)",
+                squad["player_id"].tolist(),
+                format_func=lambda x: squad.set_index("player_id").loc[x, "name"],
+                key=f"tag_player_{match_id}"
+            )
+        else:
+            cur_player = st.selectbox(
+                "Player (All Players)",
+                [p["id"] for p in players],
+                format_func=lambda x: next(p["name"] for p in players if p["id"] == x),
+                key="tag_player_all"
+            )
+
+        # Let user sync rough video time
+        cur_time = st.number_input(
+            "Current video time (sec)",
+            value=0.0,
+            step=0.1,
+            key="video_cur_time"
+        )
+
+        # Group metrics by group_name and show buttons
+        for grp in sorted({m["group_name"] for m in metrics}):
+            st.markdown(f"**{grp}**")
+            cols = st.columns(3)
+            grp_metrics = [m for m in metrics if m["group_name"] == grp]
+
+            for i, m in enumerate(grp_metrics):
+                if cols[i % 3].button(m["label"], key=f"btn_{m['id']}"):
+                    with conn:
+                        conn.execute(
+                            "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
+                            (match_id, cur_player, m["id"], cur_time)
+                        )
+                    st.toast(f"{m['label']} logged at {cur_time:.1f}s", icon="✅")
+
+        # Show recent logs
+        recent = pd.read_sql(
+            """
+            SELECT p.name, m.label, e.ts
+            FROM events e
+            JOIN players p ON p.id = e.player_id
+            JOIN metrics m ON m.id = e.metric_id
+            WHERE match_id = ?
+            ORDER BY e.id DESC
+            LIMIT 12
+            """,
+            conn, params=(match_id,)
+        )
+        if not recent.empty:
+            st.dataframe(recent, use_container_width=True)
 
 
 # ---------------- TEAMS (minimal) ----------------
