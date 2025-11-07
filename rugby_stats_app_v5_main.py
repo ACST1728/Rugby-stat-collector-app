@@ -611,12 +611,12 @@ def page_tagging(conn, role):
 
     col1, col2 = st.columns([2.2, 1])
 
-    # --- Left: video player + bookmarks ---
+    # --- LEFT: Video player + bookmarks ---
     with col1:
-        st.subheader("🎬 Video")
+        st.subheader("🎬 Video Playback")
         st.video(vid["url"], start_time=int(offset))
 
-        st.subheader("⭐ Bookmark")
+        st.subheader("⭐ Bookmark Moment")
         ts_key = f"bm_{vid_id}"
         t = st.number_input(
             "Time (sec)",
@@ -642,21 +642,64 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- Right: cascade tagging ---
+    # --- RIGHT: Squad + Tagging ---
     with col2:
-        st.subheader("🏉 Quick Tagging")
+        st.subheader("🧢 Matchday Squad Manager")
 
-        # --- Choose or build matchday team ---
+        # --- Load or create squad for this match ---
+        squad = _squad_df(conn, int(match_id))
+        all_players = _players_df(conn)
+
+        if squad.empty:
+            st.info("No matchday squad yet. Select players to create one:")
+            to_add = st.multiselect(
+                "Add Players",
+                all_players["id"].tolist(),
+                format_func=lambda x: all_players.set_index("id").loc[x, "name"],
+                key=f"squad_add_{match_id}"
+            )
+            if st.button("💾 Save Squad", key=f"squad_save_{match_id}") and to_add:
+                with conn:
+                    for pid in to_add:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO match_squad(match_id, player_id, starting) VALUES(?,?,1)",
+                            (match_id, pid)
+                        )
+                st.success("Matchday squad created!")
+                st.rerun()
+        else:
+            st.caption("Toggle players currently on the field (subs can be turned off/on live):")
+            for _, r in squad.iterrows():
+                colA, colB, colC = st.columns([3, 1, 1])
+                colA.write(r["name"])
+                active = colB.toggle("On Field", value=bool(r["starting"]), key=f"squad_active_{r['player_id']}")
+                if colC.button("❌", key=f"squad_rm_{r['player_id']}", use_container_width=True):
+                    with conn:
+                        conn.execute("DELETE FROM match_squad WHERE match_id=? AND player_id=?", (match_id, r["player_id"]))
+                    st.rerun()
+                # Update live active status
+                with conn:
+                    conn.execute("UPDATE match_squad SET starting=? WHERE match_id=? AND player_id=?", (int(active), match_id, r["player_id"]))
+
+        st.divider()
+        st.subheader("🏉 Quick Cascade Tagging")
+
+        # --- Available players = active (on-field) only ---
         squad = _squad_df(conn, int(match_id))
         if squad.empty:
-            st.warning("No matchday team selected. Using all active players.")
+            st.warning("No squad defined — showing all players.")
             available_players = pd.DataFrame(players)
         else:
-            available_players = squad.rename(columns={"player_id": "id"})[["id", "name"]]
+            on_field = squad[squad["starting"] == 1]
+            available_players = on_field.rename(columns={"player_id": "id"})[["id", "name"]]
+            if available_players.empty:
+                st.warning("No players currently marked as on-field.")
+                return
 
+        # --- Cascade Buttons: Category → Metric → Player ---
         cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
 
-        # --- Step 1: Choose Category ---
+        # Step 1️⃣: Category
         categories = sorted({m["group_name"] for m in metrics})
         st.markdown("### 1️⃣ Choose Category")
         cat_cols = st.columns(3)
@@ -667,10 +710,9 @@ def page_tagging(conn, role):
 
         selected_cat = st.session_state.get(f"selected_cat_{match_id}")
 
+        # Step 2️⃣: Metric
         if selected_cat:
             st.markdown(f"**Selected Category:** {selected_cat}")
-
-            # --- Step 2: Choose Metric ---
             st.markdown("### 2️⃣ Choose Metric")
             cat_metrics = [m for m in metrics if m["group_name"] == selected_cat]
             met_cols = st.columns(3)
@@ -680,7 +722,7 @@ def page_tagging(conn, role):
 
         selected_metric = st.session_state.get(f"selected_metric_{match_id}")
 
-        # --- Step 3: Choose Player ---
+        # Step 3️⃣: Player Tagging
         if selected_metric:
             st.markdown(f"### 3️⃣ Log '{selected_metric['label']}' for Player")
             player_cols = st.columns(4)
@@ -693,7 +735,7 @@ def page_tagging(conn, role):
                         )
                     st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
 
-        # --- Live Recent Tags ---
+        # --- Recent Tags ---
         st.markdown("### 🕒 Recent Tags")
         recent = pd.read_sql(
             """
