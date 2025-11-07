@@ -583,7 +583,7 @@ def page_tagging(conn, role):
     match_id = st.selectbox(
         "Match",
         matches["id"].tolist(),
-        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}",
+        format_func=lambda x: f"{matches.set_index('id').loc[x, 'date']} — {matches.set_index('id').loc[x, 'opponent']}",
         key="tagging_match_select"
     )
 
@@ -643,7 +643,8 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-       with col2:
+    # --- Right column: cascade tagging ---
+    with col2:
         st.subheader("🏉 Cascade Tagging")
 
         # Get squad or fallback to full player list
@@ -681,30 +682,6 @@ def page_tagging(conn, role):
                 st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
                 st.session_state["last_tagged"] = (row.name, selected_metric["label"])
 
-
-        # Let user sync rough video time
-        cur_time = st.number_input(
-            "Current video time (sec)",
-            value=0.0,
-            step=0.1,
-            key="video_cur_time"
-        )
-
-        # Group metrics by group_name and show buttons
-        for grp in sorted({m["group_name"] for m in metrics}):
-            st.markdown(f"**{grp}**")
-            cols = st.columns(3)
-            grp_metrics = [m for m in metrics if m["group_name"] == grp]
-
-            for i, m in enumerate(grp_metrics):
-                if cols[i % 3].button(m["label"], key=f"btn_{m['id']}"):
-                    with conn:
-                        conn.execute(
-                            "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
-                            (match_id, cur_player, m["id"], cur_time)
-                        )
-                    st.toast(f"{m['label']} logged at {cur_time:.1f}s", icon="✅")
-
         # Show recent logs
         recent = pd.read_sql(
             """
@@ -720,6 +697,7 @@ def page_tagging(conn, role):
         )
         if not recent.empty:
             st.dataframe(recent, use_container_width=True)
+
 
 
 # ---------------- TEAMS (minimal) ----------------
