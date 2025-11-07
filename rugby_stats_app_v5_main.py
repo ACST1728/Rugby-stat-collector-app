@@ -524,11 +524,10 @@ def page_tagging(conn, role):
 
     match_id = st.selectbox(
         "Match",
-         matches["id"].tolist(),
-         format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}",
-         key="tagging_match_select"
+        matches["id"].tolist(),
+        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}",
+        key="tagging_match_select"
     )
-
 
     players = _players_df(conn).to_dict("records")
     metrics = _metrics_df(conn, only_active=True).to_dict("records")
@@ -545,117 +544,29 @@ def page_tagging(conn, role):
     vid_id = st.selectbox(
         "Video",
         vids["id"].tolist(),
-        format_func=lambda x: vids.set_index("id").loc[x,"label"]
+        format_func=lambda x: vids.set_index("id").loc[x, "label"],
+        key=f"tag_video_{match_id}"
     )
 
     vid = vids.set_index("id").loc[vid_id]
     offset = float(vid["offset"] or 0)
 
-    col1,col2 = st.columns([2.2,1])
+    col1, col2 = st.columns([2.2, 1])
 
+    # --- Left column: video and bookmarks ---
     with col1:
         st.subheader("🎬 Video")
         st.video(vid["url"], start_time=int(offset))
 
         st.subheader("⭐ Bookmark")
         ts_key = f"bm_{vid_id}"
-        t = st.number_input("Time (sec)", value=float(st.session_state.get(ts_key, 0)), step=1.0, key=f"bm_t_{vid_id}")
-        note = st.text_input("Note", key=f"bm_note_{vid_id}")
-
-        if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
-            with conn:
-                conn.execute(
-                    "INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
-                    (match_id, vid_id, float(t), note.strip())
-                )
-            st.session_state[ts_key] = float(t)
-            st.success("Saved!")
-            st.rerun()
-
-        bms = pd.read_sql(
-            "SELECT video_ts,note FROM moments WHERE match_id=? AND video_id=? ORDER BY video_ts",
-            conn, params=(match_id,vid_id)
+        t = st.number_input(
+            "Time (sec)",
+            value=float(st.session_state.get(ts_key, 0)),
+            step=1.0,
+            key=f"bm_t_{vid_id}"
         )
-        if not bms.empty:
-            st.dataframe(bms, use_container_width=True)
 
-    with col2:
-        st.subheader("🏉 Log Event")
-
-        # Squad-first selector (falls back to full roster)
-        squad = _squad_df(conn, int(match_id))
-        if not squad.empty:
-            cur_player = st.selectbox(
-                "Player (Match Squad)",
-                squad["player_id"].tolist(),
-                format_func=lambda x: squad.set_index("player_id").loc[x,"name"],
-                key=f"tag_player_{match_id}"
-            )
-        else:
-            cur_player = st.selectbox(
-                "Player (All Players)",
-                [p["id"] for p in players],
-                format_func=lambda x: next(p["name"] for p in players if p["id"] == x),
-                key="tag_player_all"
-            )
-
-        for grp in sorted({m["group_name"] for m in metrics}):
-            st.markdown(f"**{grp}**")
-            cols = st.columns(3)
-            grp_metrics = [m for m in metrics if m["group_name"]==grp]
-            for i,m in enumerate(grp_metrics):
-              # Let user sync a rough timestamp to current video
-            cur_time = st.number_input(
-                 "Current video time (sec)",
-                 value=0.0,
-                 step=0.1,
-                 key="video_cur_time"
-                 )
-
-              # Group metrics by group_name and create buttons
-            for grp in sorted({m["group_name"] for m in metrics}):
-                 st.markdown(f"**{grp}**")
-                 cols = st.columns(3)
-                 grp_metrics = [m for m in metrics if m["group_name"] == grp]
-
-            for i, m in enumerate(grp_metrics):
-               if cols[i % 3].button(m["label"], key=f"btn_{m['id']}"):
-                    with conn:
-                        conn.execute(
-                            "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
-                            (match_id, cur_player, m["id"], cur_time)
-                        )
-                    st.toast(f"{m['label']} logged at {cur_time:.1f}s", icon="✅")
-
-
-for grp in sorted({m["group_name"] for m in metrics}):
-    st.markdown(f"**{grp}**")
-    cols = st.columns(3)
-    grp_metrics = [m for m in metrics if m["group_name"] == grp]
-
-    for i, m in enumerate(grp_metrics):
-        if cols[i % 3].button(m["label"], key=f"btn_{m['id']}"):
-            with conn:
-                conn.execute(
-                    "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
-                    (match_id, cur_player, m["id"], cur_time)
-                )
-            st.toast(f"{m['label']} logged at {cur_time:.1f}s", icon="✅")
-
-
-                recent = pd.read_sql(
-            """
-            SELECT p.name, m.label, e.ts
-            FROM events e
-            JOIN players p ON p.id=e.player_id
-            JOIN metrics m ON m.id=e.metric_id
-            WHERE match_id=?
-            ORDER BY e.id DESC
-            LIMIT 12
-            """,
-            conn, params=(match_id,)
-        )
-        st.dataframe(recent, use_container_width=True)
 
 # ---------------- TEAMS (minimal) ----------------
 def page_teams(conn, role: str):
