@@ -611,7 +611,7 @@ def page_tagging(conn, role):
 
     col1, col2 = st.columns([2.2, 1])
 
-    # --- Left column: video and bookmarks ---
+    # --- Left: video player + bookmarks ---
     with col1:
         st.subheader("🎬 Video")
         st.video(vid["url"], start_time=int(offset))
@@ -625,7 +625,6 @@ def page_tagging(conn, role):
             key=f"bm_t_{vid_id}"
         )
         note = st.text_input("Note", key=f"bm_note_{vid_id}")
-
         if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
             with conn:
                 conn.execute(
@@ -643,61 +642,75 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- Right column: cascade tagging ---
+    # --- Right: cascade tagging ---
     with col2:
-        st.subheader("🏉 Cascade Tagging")
+        st.subheader("🏉 Quick Tagging")
 
-        # Get squad or fallback to full player list
+        # --- Choose or build matchday team ---
         squad = _squad_df(conn, int(match_id))
-        available_players = (
-            squad[["player_id", "name"]].rename(columns={"player_id": "id"})
-            if not squad.empty else
-            pd.DataFrame(players)
-        )
+        if squad.empty:
+            st.warning("No matchday team selected. Using all active players.")
+            available_players = pd.DataFrame(players)
+        else:
+            available_players = squad.rename(columns={"player_id": "id"})[["id", "name"]]
 
-        # Step 1️⃣ — Pick a Category (group_name)
-        categories = sorted({m["group_name"] for m in metrics})
-        selected_cat = st.selectbox("Category", categories, key=f"cat_{match_id}")
-
-        # Step 2️⃣ — Pick a Metric within that Category
-        cat_metrics = [m for m in metrics if m["group_name"] == selected_cat]
-        selected_metric_label = st.selectbox(
-            "Metric",
-            [m["label"] for m in cat_metrics],
-            key=f"metric_{match_id}"
-        )
-        selected_metric = next((m for m in cat_metrics if m["label"] == selected_metric_label), None)
-
-        # Step 3️⃣ — Pick Player and log
         cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
 
-        cols = st.columns(4)
-        for i, row in enumerate(available_players.itertuples()):
-            if cols[i % 4].button(row.name, key=f"tag_{row.id}_{selected_metric['id']}"):
-                with conn:
-                    conn.execute(
-                        "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
-                        (match_id, row.id, selected_metric["id"], cur_time)
-                    )
-                st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
-                st.session_state["last_tagged"] = (row.name, selected_metric["label"])
+        # --- Step 1: Choose Category ---
+        categories = sorted({m["group_name"] for m in metrics})
+        st.markdown("### 1️⃣ Choose Category")
+        cat_cols = st.columns(3)
+        for i, cat in enumerate(categories):
+            if cat_cols[i % 3].button(cat, key=f"cat_{match_id}_{cat}"):
+                st.session_state[f"selected_cat_{match_id}"] = cat
+                st.session_state.pop(f"selected_metric_{match_id}", None)
 
-        # Show recent logs
+        selected_cat = st.session_state.get(f"selected_cat_{match_id}")
+
+        if selected_cat:
+            st.markdown(f"**Selected Category:** {selected_cat}")
+
+            # --- Step 2: Choose Metric ---
+            st.markdown("### 2️⃣ Choose Metric")
+            cat_metrics = [m for m in metrics if m["group_name"] == selected_cat]
+            met_cols = st.columns(3)
+            for i, m in enumerate(cat_metrics):
+                if met_cols[i % 3].button(m["label"], key=f"met_{match_id}_{m['id']}"):
+                    st.session_state[f"selected_metric_{match_id}"] = m
+
+        selected_metric = st.session_state.get(f"selected_metric_{match_id}")
+
+        # --- Step 3: Choose Player ---
+        if selected_metric:
+            st.markdown(f"### 3️⃣ Log '{selected_metric['label']}' for Player")
+            player_cols = st.columns(4)
+            for i, row in enumerate(available_players.itertuples()):
+                if player_cols[i % 4].button(row.name, key=f"tag_{match_id}_{row.id}_{selected_metric['id']}"):
+                    with conn:
+                        conn.execute(
+                            "INSERT INTO events(match_id,player_id,metric_id,value,ts) VALUES(?,?,?,?,datetime('now'))",
+                            (match_id, row.id, selected_metric["id"], cur_time)
+                        )
+                    st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
+
+        # --- Live Recent Tags ---
+        st.markdown("### 🕒 Recent Tags")
         recent = pd.read_sql(
             """
-            SELECT p.name, m.label, e.ts
+            SELECT p.name AS player, m.label AS metric, e.value AS time
             FROM events e
-            JOIN players p ON p.id = e.player_id
-            JOIN metrics m ON m.id = e.metric_id
-            WHERE match_id = ?
+            JOIN players p ON p.id=e.player_id
+            JOIN metrics m ON m.id=e.metric_id
+            WHERE match_id=?
             ORDER BY e.id DESC
-            LIMIT 12
+            LIMIT 10
             """,
             conn, params=(match_id,)
         )
-        if not recent.empty:
-            st.dataframe(recent, use_container_width=True)
-
+        if recent.empty:
+            st.caption("No events logged yet.")
+        else:
+            st.dataframe(recent, use_container_width=True, hide_index=True)
 
 
 # ---------------- TEAMS (minimal) ----------------
