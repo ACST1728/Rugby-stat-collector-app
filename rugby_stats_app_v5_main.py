@@ -4,6 +4,8 @@ import sqlite3, datetime as dt
 import pandas as pd
 import streamlit as st
 import altair as alt
+import streamlit.components.v1 as components
+import plotly.express as px
 
 # ---------------- DB Helpers ----------------
 def init_db(conn):
@@ -614,11 +616,30 @@ def page_tagging(conn, role):
     # --- LEFT: Video player + bookmarks ---
     with col1:
         st.subheader("🎬 Video Playback")
-        st.video(vid["url"], start_time=int(offset))
+
+        video_url = vid["url"]
+        # Custom HTML5 player that syncs playback time back to Streamlit
+        components.html(f"""
+        <video id="videoPlayer" width="100%" controls>
+            <source src="{video_url}" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+        <script>
+        const streamlit = window.parent;
+        const video = document.getElementById('videoPlayer');
+        setInterval(() => {{
+            const time = video.currentTime;
+            streamlit.postMessage({{"type": "streamlit:setComponentValue", "value": time}}, "*");
+        }}, 1000);
+        </script>
+        """, height=400)
+
+        # Live updating video time
+        cur_time = st.session_state.get("video_cur_time", 0.0)
+        st.number_input("Current video time (sec)", value=cur_time, step=0.1, key="video_cur_time")
 
         st.subheader("⭐ Bookmark Moment")
-        ts_key = f"bm_{vid_id}"
-        t = st.number_input("Time (sec)", value=float(st.session_state.get(ts_key, 0)), step=1.0, key=f"bm_t_{vid_id}")
+        t = st.session_state.get("video_cur_time", 0.0)
         note = st.text_input("Note", key=f"bm_note_{vid_id}")
         if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
             with conn:
@@ -626,8 +647,7 @@ def page_tagging(conn, role):
                     "INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
                     (match_id, vid_id, float(t), note.strip())
                 )
-            st.session_state[ts_key] = float(t)
-            st.success("Bookmark saved!")
+            st.success(f"Bookmark saved at {t:.1f}s!")
             st.rerun()
 
         bms = pd.read_sql(
@@ -637,7 +657,7 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- RIGHT: Tagging Cascade + Squad + Sub Timeline ---
+    # --- RIGHT: Cascade tagging + squad management ---
     with col2:
         st.subheader("🏉 Quick Cascade Tagging")
 
@@ -652,7 +672,7 @@ def page_tagging(conn, role):
                 st.warning("No players currently marked as on-field.")
                 return
 
-        cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
+        cur_time = st.session_state.get("video_cur_time", 0.0)
 
         # Step 1️⃣: Category
         categories = sorted({m["group_name"] for m in metrics})
@@ -743,22 +763,72 @@ def page_tagging(conn, role):
                         conn.execute("UPDATE match_squad SET starting=? WHERE match_id=? AND player_id=?",
                                      (int(active), match_id, r["player_id"]))
 
-        # --- Substitution Timeline Viewer ---
+        # --- Substitution Timeline Viewer (Bar Gantt Style) ---
         st.markdown("### ⏱️ Substitution Timeline")
+
         subs = pd.read_sql(
             """
             SELECT p.name AS player, s.action, s.ts
             FROM substitutions s
             JOIN players p ON p.id=s.player_id
             WHERE s.match_id=?
-            ORDER BY s.id DESC
+            ORDER BY s.id ASC
             """,
             conn, params=(match_id,)
         )
+
         if subs.empty:
             st.caption("No substitutions recorded yet.")
         else:
-            st.dataframe(subs, use_container_width=True, hide_index=True)
+            subs["ts"] = pd.to_datetime(subs["ts"])
+            intervals = []
+            on_times = {}
+
+            # Build ON→OFF spans
+            for _, row in subs.iterrows():
+                player = row["player"]
+                action = row["action"]
+                ts = row["ts"]
+
+                if action == "ON":
+                    on_times[player] = ts
+                elif action == "OFF" and player in on_times:
+                    intervals.append({
+                        "player": player,
+                        "start": on_times[player],
+                        "end": ts
+                    })
+                    del on_times[player]
+
+            # Players still ON (no OFF recorded yet)
+            for player, start_time in on_times.items():
+                intervals.append({
+                    "player": player,
+                    "start": start_time,
+                    "end": pd.Timestamp.now()
+                })
+
+            if intervals:
+                df_intervals = pd.DataFrame(intervals)
+                fig = px.timeline(
+                    df_intervals,
+                    x_start="start",
+                    x_end="end",
+                    y="player",
+                    color_discrete_sequence=["green"],
+                    title="Substitution Timeline — Active Periods",
+                )
+                fig.update_yaxes(autorange="reversed")
+                fig.update_layout(
+                    height=400,
+                    xaxis_title="Match Time",
+                    yaxis_title="",
+                    showlegend=False,
+                    margin=dict(l=40, r=20, t=40, b=40)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.caption("Players selected but no ON/OFF intervals to display.")
 
         # --- Recent Tags ---
         st.divider()
@@ -779,7 +849,6 @@ def page_tagging(conn, role):
             st.caption("No events logged yet.")
         else:
             st.dataframe(recent, use_container_width=True, hide_index=True)
-
 
 # ---------------- TEAMS (minimal) ----------------
 def page_teams(conn, role: str):
