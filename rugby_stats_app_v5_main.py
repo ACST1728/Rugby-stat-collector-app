@@ -577,6 +577,7 @@ def page_videos(conn, role):
 def page_tagging(conn, role):
     st.header("🎥 Video + Live Match Tagging")
 
+    # --- Load Matches ---
     matches = _matches_df(conn)
     if matches.empty:
         st.warning("Create a match first.")
@@ -589,14 +590,15 @@ def page_tagging(conn, role):
         key="tagging_match_select"
     )
 
+    # --- Load Players & Metrics ---
     players = _players_df(conn).to_dict("records")
     metrics = _metrics_df(conn, only_active=True).to_dict("records")
 
+    # --- Load Video(s) ---
     vids = pd.read_sql(
         "SELECT id,label,url,offset FROM videos WHERE match_id=? ORDER BY id",
         conn, params=(match_id,)
     )
-
     if vids.empty:
         st.warning("Add a video first.")
         return
@@ -607,39 +609,24 @@ def page_tagging(conn, role):
         format_func=lambda x: vids.set_index("id").loc[x, "label"],
         key=f"tag_video_{match_id}"
     )
-
     vid = vids.set_index("id").loc[vid_id]
     offset = float(vid["offset"] or 0)
 
     col1, col2 = st.columns([2.2, 1])
 
-    # --- LEFT: Video player + bookmarks ---
+    # --- LEFT COLUMN: Video + Bookmarks ---
     with col1:
-        st.subheader("🎬 Video Playback")
+        st.subheader("🎬 Video")
+        st.video(vid["url"], start_time=int(offset))
 
-        video_url = vid["url"]
-        # Custom HTML5 player that syncs playback time back to Streamlit
-        components.html(f"""
-        <video id="videoPlayer" width="100%" controls>
-            <source src="{video_url}" type="video/mp4">
-            Your browser does not support the video tag.
-        </video>
-        <script>
-        const streamlit = window.parent;
-        const video = document.getElementById('videoPlayer');
-        setInterval(() => {{
-            const time = video.currentTime;
-            streamlit.postMessage({{"type": "streamlit:setComponentValue", "value": time}}, "*");
-        }}, 1000);
-        </script>
-        """, height=400)
-
-        # Live updating video time
-        cur_time = st.session_state.get("video_cur_time", 0.0)
-        st.number_input("Current video time (sec)", value=cur_time, step=0.1, key="video_cur_time")
-
-        st.subheader("⭐ Bookmark Moment")
-        t = st.session_state.get("video_cur_time", 0.0)
+        st.subheader("⭐ Bookmark")
+        ts_key = f"bm_{vid_id}"
+        t = st.number_input(
+            "Time (sec)",
+            value=float(st.session_state.get(ts_key, 0)),
+            step=1.0,
+            key=f"bm_t_{vid_id}"
+        )
         note = st.text_input("Note", key=f"bm_note_{vid_id}")
         if st.button("Add Bookmark", key=f"bm_add_{vid_id}"):
             with conn:
@@ -647,7 +634,8 @@ def page_tagging(conn, role):
                     "INSERT INTO moments(match_id,video_id,video_ts,note) VALUES(?,?,?,?)",
                     (match_id, vid_id, float(t), note.strip())
                 )
-            st.success(f"Bookmark saved at {t:.1f}s!")
+            st.session_state[ts_key] = float(t)
+            st.success("Bookmark saved!")
             st.rerun()
 
         bms = pd.read_sql(
@@ -657,24 +645,21 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- RIGHT: Cascade tagging + squad management ---
+    # --- RIGHT COLUMN: Cascade Tagging ---
     with col2:
-        st.subheader("🏉 Quick Cascade Tagging")
+        st.subheader("🏉 Quick Tagging")
 
-        # --- Filter players (active on field if available) ---
+        # Matchday team
         squad = _squad_df(conn, int(match_id))
         if squad.empty:
+            st.warning("No matchday team selected. Using all active players.")
             available_players = pd.DataFrame(players)
         else:
-            on_field = squad[squad["starting"] == 1]
-            available_players = on_field.rename(columns={"player_id": "id"})[["id", "name"]]
-            if available_players.empty:
-                st.warning("No players currently marked as on-field.")
-                return
+            available_players = squad.rename(columns={"player_id": "id"})[["id", "name"]]
 
-        cur_time = st.session_state.get("video_cur_time", 0.0)
+        cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
 
-        # Step 1️⃣: Category
+        # Step 1: Category
         categories = sorted({m["group_name"] for m in metrics})
         st.markdown("### 1️⃣ Choose Category")
         cat_cols = st.columns(3)
@@ -684,10 +669,10 @@ def page_tagging(conn, role):
                 st.session_state.pop(f"selected_metric_{match_id}", None)
 
         selected_cat = st.session_state.get(f"selected_cat_{match_id}")
-
-        # Step 2️⃣: Metric
         if selected_cat:
             st.markdown(f"**Selected Category:** {selected_cat}")
+
+            # Step 2: Metric
             st.markdown("### 2️⃣ Choose Metric")
             cat_metrics = [m for m in metrics if m["group_name"] == selected_cat]
             met_cols = st.columns(3)
@@ -697,7 +682,7 @@ def page_tagging(conn, role):
 
         selected_metric = st.session_state.get(f"selected_metric_{match_id}")
 
-        # Step 3️⃣: Player Tagging
+        # Step 3: Player
         if selected_metric:
             st.markdown(f"### 3️⃣ Log '{selected_metric['label']}' for Player")
             player_cols = st.columns(4)
@@ -710,138 +695,48 @@ def page_tagging(conn, role):
                         )
                     st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
 
-        # --- Matchday Squad Manager (below cascade) ---
+        # --- TEAM EVENTS TAGGING ---
         st.divider()
-        st.subheader("🧢 Matchday Squad Manager")
+        st.subheader("🏟️ Team Events")
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS substitutions(
-                id INTEGER PRIMARY KEY,
-                match_id INTEGER,
-                player_id INTEGER,
-                action TEXT,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        team_metrics = [
+            {"label": "Scrum Won", "group_name": "Set Piece"},
+            {"label": "Scrum Lost", "group_name": "Set Piece"},
+            {"label": "Lineout Won", "group_name": "Set Piece"},
+            {"label": "Lineout Lost", "group_name": "Set Piece"},
+            {"label": "Maul Formed", "group_name": "Attack"},
+            {"label": "Maul Collapsed", "group_name": "Attack"},
+            {"label": "22 Entry", "group_name": "Territory"},
+            {"label": "Exit Completed", "group_name": "Territory"},
+            {"label": "Penalty Won", "group_name": "Discipline"},
+            {"label": "Penalty Conceded", "group_name": "Discipline"}
+        ]
 
-        all_players = _players_df(conn)
-        squad = _squad_df(conn, int(match_id))
-
-        if squad.empty:
-            st.info("No squad yet. Add players below:")
-            to_add = st.multiselect(
-                "Add Players",
-                all_players["id"].tolist(),
-                format_func=lambda x: all_players.set_index("id").loc[x, "name"],
-                key=f"squad_add_{match_id}"
-            )
-            if st.button("💾 Save Squad", key=f"squad_save_{match_id}") and to_add:
+        cols = st.columns(3)
+        for i, m in enumerate(team_metrics):
+            if cols[i % 3].button(m["label"], key=f"team_event_{m['label']}_{match_id}"):
                 with conn:
-                    for pid in to_add:
-                        conn.execute(
-                            "INSERT OR IGNORE INTO match_squad(match_id, player_id, starting) VALUES(?,?,1)",
-                            (match_id, pid)
-                        )
-                st.success("Squad created!")
-                st.rerun()
-        else:
-            st.caption("Toggle players currently on field (auto-logs subs):")
-            for _, r in squad.iterrows():
-                colA, colB, colC = st.columns([3, 1, 1])
-                colA.write(r["name"])
-                active = colB.toggle("On Field", value=bool(r["starting"]), key=f"squad_active_{r['player_id']}")
-                if colC.button("❌", key=f"squad_rm_{r['player_id']}", use_container_width=True):
-                    with conn:
-                        conn.execute("DELETE FROM match_squad WHERE match_id=? AND player_id=?", (match_id, r["player_id"]))
-                    st.rerun()
-
-                if active != bool(r["starting"]):
-                    action = "ON" if active else "OFF"
-                    with conn:
-                        conn.execute("INSERT INTO substitutions(match_id,player_id,action) VALUES(?,?,?)",
-                                     (match_id, r["player_id"], action))
-                        conn.execute("UPDATE match_squad SET starting=? WHERE match_id=? AND player_id=?",
-                                     (int(active), match_id, r["player_id"]))
-
-        # --- Substitution Timeline Viewer (Bar Gantt Style) ---
-        st.markdown("### ⏱️ Substitution Timeline")
-
-        subs = pd.read_sql(
-            """
-            SELECT p.name AS player, s.action, s.ts
-            FROM substitutions s
-            JOIN players p ON p.id=s.player_id
-            WHERE s.match_id=?
-            ORDER BY s.id ASC
-            """,
-            conn, params=(match_id,)
-        )
-
-        if subs.empty:
-            st.caption("No substitutions recorded yet.")
-        else:
-            subs["ts"] = pd.to_datetime(subs["ts"])
-            intervals = []
-            on_times = {}
-
-            # Build ON→OFF spans
-            for _, row in subs.iterrows():
-                player = row["player"]
-                action = row["action"]
-                ts = row["ts"]
-
-                if action == "ON":
-                    on_times[player] = ts
-                elif action == "OFF" and player in on_times:
-                    intervals.append({
-                        "player": player,
-                        "start": on_times[player],
-                        "end": ts
-                    })
-                    del on_times[player]
-
-            # Players still ON (no OFF recorded yet)
-            for player, start_time in on_times.items():
-                intervals.append({
-                    "player": player,
-                    "start": start_time,
-                    "end": pd.Timestamp.now()
-                })
-
-            if intervals:
-                df_intervals = pd.DataFrame(intervals)
-                fig = px.timeline(
-                    df_intervals,
-                    x_start="start",
-                    x_end="end",
-                    y="player",
-                    color_discrete_sequence=["green"],
-                    title="Substitution Timeline — Active Periods",
-                )
-                fig.update_yaxes(autorange="reversed")
-                fig.update_layout(
-                    height=400,
-                    xaxis_title="Match Time",
-                    yaxis_title="",
-                    showlegend=False,
-                    margin=dict(l=40, r=20, t=40, b=40)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.caption("Players selected but no ON/OFF intervals to display.")
+                    conn.execute(
+                        """
+                        INSERT INTO events(match_id, team_id, metric_id, value, ts)
+                        VALUES(?, ?, NULL, ?, datetime('now'))
+                        """,
+                        (match_id, 1, cur_time)
+                    )
+                st.toast(f"✅ {m['label']} logged at {cur_time:.1f}s")
 
         # --- Recent Tags ---
         st.divider()
         st.markdown("### 🕒 Recent Tags")
         recent = pd.read_sql(
             """
-            SELECT p.name AS player, m.label AS metric, e.value AS time
+            SELECT COALESCE(p.name,'TEAM') AS player, m.label AS metric, e.value AS time
             FROM events e
-            JOIN players p ON p.id=e.player_id
-            JOIN metrics m ON m.id=e.metric_id
-            WHERE match_id=?
+            LEFT JOIN players p ON p.id=e.player_id
+            LEFT JOIN metrics m ON m.id=e.metric_id
+            WHERE e.match_id=?
             ORDER BY e.id DESC
-            LIMIT 10
+            LIMIT 12
             """,
             conn, params=(match_id,)
         )
