@@ -64,13 +64,6 @@ def init_db(conn):
         ts TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS users(
-        username TEXT PRIMARY KEY,
-        pass_hash BLOB NOT NULL,
-        role TEXT NOT NULL,
-        active INTEGER DEFAULT 1
-    );
-
     CREATE TABLE IF NOT EXISTS teams(
         id INTEGER PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
@@ -93,6 +86,24 @@ def init_db(conn):
         UNIQUE(match_id, player_id)
     );
     """)
+
+    # --- Backward compatibility patches ---
+    # Ensure matches table has team_id column
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)").fetchall()}
+    if "team_id" not in cols:
+        try:
+            conn.execute("ALTER TABLE matches ADD COLUMN team_id INTEGER;")
+        except sqlite3.OperationalError:
+            pass
+
+    # ✅ Ensure events table has team_id column
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "team_id" not in cols:
+        try:
+            conn.execute("ALTER TABLE events ADD COLUMN team_id INTEGER;")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
 
 
