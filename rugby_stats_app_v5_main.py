@@ -695,7 +695,7 @@ def page_tagging(conn, role):
                         )
                     st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
 
-        # --- TEAM EVENTS TAGGING ---
+                # --- TEAM EVENTS TAGGING ---
         st.divider()
         st.subheader("🏟️ Team Events")
 
@@ -718,12 +718,37 @@ def page_tagging(conn, role):
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO events(match_id, team_id, metric_id, value, ts)
-                        VALUES(?, ?, NULL, ?, datetime('now'))
+                        INSERT INTO events(match_id, player_id, team_id, metric_id, value, ts)
+                        VALUES(?, NULL, ?, NULL, ?, datetime('now'))
                         """,
                         (match_id, 1, cur_time)
                     )
                 st.toast(f"✅ {m['label']} logged at {cur_time:.1f}s")
+
+        # --- RECENT TAGS ---
+        st.divider()
+        st.markdown("### 🕒 Recent Tags")
+        recent = pd.read_sql(
+            """
+            SELECT 
+                COALESCE(p.name,'TEAM') AS player,
+                m.label AS metric,
+                ROUND(e.value,1) AS time,
+                e.ts AS logged_at
+            FROM events e
+            LEFT JOIN players p ON p.id = e.player_id
+            LEFT JOIN metrics m ON m.id = e.metric_id
+            WHERE e.match_id = ?
+            ORDER BY e.id DESC
+            LIMIT 12
+            """,
+            conn, params=(match_id,)
+        )
+        if recent.empty:
+            st.caption("No events logged yet.")
+        else:
+            st.dataframe(recent, use_container_width=True, hide_index=True)
+
 
         # --- Recent Tags ---
         st.divider()
