@@ -623,11 +623,42 @@ def page_tagging(conn, role):
     vid = vids.set_index("id").loc[vid_id]
     offset = float(vid["offset"] or 0)
 
-    col1, col2 = st.columns([2.2, 1])
+        # --- Layout: sticky video (left) + scrollable tagging (right) ---
+    st.markdown("""
+    <style>
+    /* Make video column sticky */
+    [data-testid="column"]:first-child {
+        position: sticky !important;
+        top: 1rem;
+        align-self: flex-start;
+        height: fit-content;
+        z-index: 10;
+    }
 
-    # --- LEFT COLUMN: Video + Bookmarks ---
+    /* Scrollable right-hand panel */
+    .scroll-box {
+        max-height: 85vh;
+        overflow-y: auto;
+        padding-right: 0.75rem;
+        scrollbar-width: thin;
+    }
+
+    /* Smooth look for scroll area */
+    .scroll-box::-webkit-scrollbar {
+        width: 8px;
+    }
+    .scroll-box::-webkit-scrollbar-thumb {
+        background-color: rgba(180,180,180,0.4);
+        border-radius: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2.3, 1])
+
+    # --- Left: video player + bookmarks ---
     with col1:
-        st.subheader("🎬 Video")
+        st.subheader("🎬 Video Playback")
         st.video(vid["url"], start_time=int(offset))
 
         st.subheader("⭐ Bookmark")
@@ -656,11 +687,12 @@ def page_tagging(conn, role):
         if not bms.empty:
             st.dataframe(bms, use_container_width=True)
 
-    # --- RIGHT COLUMN: Cascade Tagging ---
+    # --- Right: scrollable tagging + matchday squad manager ---
     with col2:
+        st.markdown('<div class="scroll-box">', unsafe_allow_html=True)
         st.subheader("🏉 Quick Tagging")
 
-        # Matchday team
+        # Load squad or fallback to all players
         squad = _squad_df(conn, int(match_id))
         if squad.empty:
             st.warning("No matchday team selected. Using all active players.")
@@ -670,7 +702,7 @@ def page_tagging(conn, role):
 
         cur_time = st.number_input("Current video time (sec)", value=0.0, step=0.1, key=f"time_{match_id}")
 
-        # Step 1: Category
+        # --- Step 1: Category selection ---
         categories = sorted({m["group_name"] for m in metrics})
         st.markdown("### 1️⃣ Choose Category")
         cat_cols = st.columns(3)
@@ -680,12 +712,12 @@ def page_tagging(conn, role):
                 st.session_state.pop(f"selected_metric_{match_id}", None)
 
         selected_cat = st.session_state.get(f"selected_cat_{match_id}")
+
+        # --- Step 2: Metric selection ---
         if selected_cat:
             st.markdown(f"**Selected Category:** {selected_cat}")
-
-            # Step 2: Metric
-            st.markdown("### 2️⃣ Choose Metric")
             cat_metrics = [m for m in metrics if m["group_name"] == selected_cat]
+            st.markdown("### 2️⃣ Choose Metric")
             met_cols = st.columns(3)
             for i, m in enumerate(cat_metrics):
                 if met_cols[i % 3].button(m["label"], key=f"met_{match_id}_{m['id']}"):
@@ -693,7 +725,7 @@ def page_tagging(conn, role):
 
         selected_metric = st.session_state.get(f"selected_metric_{match_id}")
 
-        # Step 3: Player
+        # --- Step 3: Player tagging ---
         if selected_metric:
             st.markdown(f"### 3️⃣ Log '{selected_metric['label']}' for Player")
             player_cols = st.columns(4)
@@ -706,35 +738,58 @@ def page_tagging(conn, role):
                         )
                     st.toast(f"{row.name} — {selected_metric['label']} @ {cur_time:.1f}s", icon="✅")
 
-                # --- TEAM EVENTS TAGGING ---
+        # --- Matchday Squad Manager ---
         st.divider()
-        st.subheader("🏟️ Team Events")
+        st.subheader("👥 Matchday Squad Manager")
 
-        team_metrics = [
-            {"label": "Scrum Won", "group_name": "Set Piece"},
-            {"label": "Scrum Lost", "group_name": "Set Piece"},
-            {"label": "Lineout Won", "group_name": "Set Piece"},
-            {"label": "Lineout Lost", "group_name": "Set Piece"},
-            {"label": "Maul Formed", "group_name": "Attack"},
-            {"label": "Maul Collapsed", "group_name": "Attack"},
-            {"label": "22 Entry", "group_name": "Territory"},
-            {"label": "Exit Completed", "group_name": "Territory"},
-            {"label": "Penalty Won", "group_name": "Discipline"},
-            {"label": "Penalty Conceded", "group_name": "Discipline"}
-        ]
+        matches = _matches_df(conn)
+        teams = _teams_df(conn)
+        cur = _match_row(conn, int(match_id))
+        current_team = None
+        if cur and cur.get("team_id"):
+            try:
+                current_team = teams.set_index("id").loc[cur["team_id"], "name"]
+                st.caption(f"Linked Team: **{current_team}**")
+            except Exception:
+                pass
 
-        cols = st.columns(3)
-        for i, m in enumerate(team_metrics):
-            if cols[i % 3].button(m["label"], key=f"team_event_{m['label']}_{match_id}"):
+        squad = _squad_df(conn, int(match_id))
+        st.write("**Current Squad**")
+        if squad.empty:
+            st.caption("No players selected yet.")
+        else:
+            st.dataframe(squad[["name", "position", "shirt_number", "starting"]], use_container_width=True, hide_index=True)
+
+        if role in ("admin", "editor"):
+            st.markdown("#### Manage Squad")
+            all_players = pd.read_sql("SELECT id,name FROM players WHERE active=1 ORDER BY name", conn)
+
+            to_add = st.selectbox(
+                "Add Player",
+                all_players["id"].tolist(),
+                format_func=lambda x: all_players.set_index("id").loc[x, "name"],
+                key=f"squad_add_{match_id}"
+            )
+            if st.button("➕ Add to Squad", use_container_width=True):
                 with conn:
-                    conn.execute(
-                        """
-                        INSERT INTO events(match_id, player_id, team_id, metric_id, value, ts)
-                        VALUES(?, NULL, ?, NULL, ?, datetime('now'))
-                        """,
-                        (match_id, 1, cur_time)
-                    )
-                st.toast(f"✅ {m['label']} logged at {cur_time:.1f}s")
+                    conn.execute("INSERT OR IGNORE INTO match_squad(match_id,player_id,starting) VALUES(?,?,1)", (match_id, to_add))
+                st.success("Player added to squad.")
+                st.rerun()
+
+            if not squad.empty:
+                to_rm = st.selectbox(
+                    "Remove Player",
+                    squad["player_id"].tolist(),
+                    format_func=lambda x: squad.set_index("player_id").loc[x, "name"],
+                    key=f"squad_rm_{match_id}"
+                )
+                if st.button("➖ Remove", use_container_width=True):
+                    with conn:
+                        conn.execute("DELETE FROM match_squad WHERE match_id=? AND player_id=?", (match_id, to_rm))
+                    st.warning("Player removed.")
+                    st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # --- RECENT TAGS ---
         st.divider()
