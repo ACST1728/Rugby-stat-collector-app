@@ -247,7 +247,13 @@ def get_dropbox():
 
 
 def page_videos(conn):
-    st.header("🎞️ Manage Match Videos")
+        st.caption("🔍 Debug: Checking Dropbox secret")
+     if "DROPBOX_ACCESS_TOKEN" in st.secrets:
+        st.success("✅ Dropbox token detected in secrets!")
+     else:
+        st.error("❌ No Dropbox token found in secrets.toml or Streamlit Cloud Secrets.")
+
+        st.header("🎞️ Manage Match Videos")
 
     matches = _matches_df(conn)
     if matches.empty:
