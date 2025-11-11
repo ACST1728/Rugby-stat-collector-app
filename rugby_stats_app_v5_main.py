@@ -225,25 +225,42 @@ def _squad_df(conn, match_id: int):
 # ---------------- VIDEO UPLOAD / MANAGEMENT ----------------
 import dropbox
 
-# --- Helper: Get Dropbox connection ---
 @st.cache_resource
 def get_dropbox():
-    TOKEN = st.secrets.get("DROPBOX_ACCESS_TOKEN") or st.session_state.get("dropbox_token")
-    if not TOKEN:
+    """Return an authenticated Dropbox client or None if missing/invalid token."""
+    token = None
+    try:
+        token = st.secrets["DROPBOX_ACCESS_TOKEN"]
+    except Exception:
+        token = st.session_state.get("dropbox_token")
+
+    if not token:
         return None
-    return dropbox.Dropbox(TOKEN)
+
+    try:
+        dbx = dropbox.Dropbox(token)
+        dbx.users_get_current_account()  # verify it works
+        return dbx
+    except Exception as e:
+        st.error(f"Dropbox connection failed: {e}")
+        return None
 
 
 def page_videos(conn):
     st.header("🎞️ Manage Match Videos")
 
+    matches = _matches_df(conn)
+    if matches.empty:
+        st.warning("No matches found. Please create one first.")
+        return
+
     match_id = st.selectbox(
         "Match",
-        _matches_df(conn)["id"].tolist(),
-        format_func=lambda x: _matches_df(conn).set_index("id").loc[x, "opponent"]
+        matches["id"].tolist(),
+        format_func=lambda x: matches.set_index("id").loc[x, "opponent"]
     )
 
-    # Load current videos
+    # --- Current Videos ---
     vids = pd.read_sql("SELECT * FROM videos WHERE match_id=?", conn, params=(match_id,))
     if not vids.empty:
         st.dataframe(vids[["label", "url", "offset"]], use_container_width=True)
@@ -256,9 +273,9 @@ def page_videos(conn):
     if not dbx:
         st.warning("🔑 Please add your Dropbox API token to `.streamlit/secrets.toml` as `DROPBOX_ACCESS_TOKEN`.")
         st.code('[DROPBOX_ACCESS_TOKEN]\nYOUR_ACCESS_TOKEN_HERE', language="toml")
-        return
+        st.stop()
 
-    # Browse Dropbox folder
+    # --- Browse Dropbox Folder ---
     folder_path = st.text_input("📁 Dropbox Folder Path", value="/Videos")
     try:
         files = dbx.files_list_folder(folder_path).entries
@@ -268,9 +285,18 @@ def page_videos(conn):
             st.info("No MP4 files found in this folder.")
         else:
             selected_file = st.selectbox("🎬 Choose video", mp4_files, format_func=lambda f: f.name)
-            link = dbx.sharing_create_shared_link_with_settings(selected_file.path_lower).url
-            direct_link = link.replace("?dl=0", "?raw=1").replace("?dl=1", "?raw=1")
+            # create or reuse a shareable link
+            try:
+                link = dbx.sharing_create_shared_link_with_settings(selected_file.path_lower).url
+            except dropbox.exceptions.ApiError:
+                links = dbx.sharing_list_shared_links(path=selected_file.path_lower).links
+                link = links[0].url if links else None
 
+            if not link:
+                st.error("Could not create or retrieve a Dropbox share link.")
+                return
+
+            direct_link = link.replace("?dl=0", "?raw=1").replace("?dl=1", "?raw=1")
             label = st.text_input("Label", value=selected_file.name.rsplit(".", 1)[0])
             offset = st.number_input("Start Offset (sec)", value=0.0, step=0.5)
 
@@ -286,7 +312,7 @@ def page_videos(conn):
     except dropbox.exceptions.ApiError as e:
         st.error(f"Dropbox error: {e}")
 
-
+    # --- Existing Videos Preview ---
     st.divider()
     st.subheader("🎦 Existing Videos")
 
@@ -301,6 +327,7 @@ def page_videos(conn):
         for _, v in vids.iterrows():
             st.markdown(f"**{v['label']}** — Offset: {v['offset']}s")
             st.video(v["url"])
+
 
 
 def _match_row(conn, match_id: int):
