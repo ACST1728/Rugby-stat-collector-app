@@ -223,46 +223,69 @@ def _squad_df(conn, match_id: int):
     """, conn, params=(int(match_id),))
 
 # ---------------- VIDEO UPLOAD / MANAGEMENT ----------------
-import os
+import dropbox
 
-def page_videos(conn, role):
-    st.header("🎞️ Match Videos")
+# --- Helper: Get Dropbox connection ---
+@st.cache_resource
+def get_dropbox():
+    TOKEN = st.secrets.get("DROPBOX_ACCESS_TOKEN") or st.session_state.get("dropbox_token")
+    if not TOKEN:
+        return None
+    return dropbox.Dropbox(TOKEN)
 
-    matches = _matches_df(conn)
-    if matches.empty:
-        st.warning("Please create a match first.")
-        return
+
+def page_videos(conn):
+    st.header("🎞️ Manage Match Videos")
 
     match_id = st.selectbox(
-        "Select match",
-        matches["id"].tolist(),
-        format_func=lambda x: f"{matches.set_index('id').loc[x,'date']} — {matches.set_index('id').loc[x,'opponent']}"
+        "Match",
+        _matches_df(conn)["id"].tolist(),
+        format_func=lambda x: _matches_df(conn).set_index("id").loc[x, "opponent"]
     )
 
+    # Load current videos
+    vids = pd.read_sql("SELECT * FROM videos WHERE match_id=?", conn, params=(match_id,))
+    if not vids.empty:
+        st.dataframe(vids[["label", "url", "offset"]], use_container_width=True)
+
     st.divider()
-    st.subheader("📤 Upload Video (MP4)")
+    st.subheader("📤 Add New Video")
 
-    uploaded_file = st.file_uploader("Upload MP4", type=["mp4"], key="video_uploader")
+    # --- Dropbox API connection ---
+    dbx = get_dropbox()
+    if not dbx:
+        st.warning("🔑 Please add your Dropbox API token to `.streamlit/secrets.toml` as `DROPBOX_ACCESS_TOKEN`.")
+        st.code('[DROPBOX_ACCESS_TOKEN]\nYOUR_ACCESS_TOKEN_HERE', language="toml")
+        return
 
-    if uploaded_file is not None:
-        # Save uploaded video to local mount (persistent for Streamlit Cloud or local runs)
-        os.makedirs("/mnt/data/videos", exist_ok=True)
-        save_path = os.path.join("/mnt/data/videos", uploaded_file.name)
+    # Browse Dropbox folder
+    folder_path = st.text_input("📁 Dropbox Folder Path", value="/Videos")
+    try:
+        files = dbx.files_list_folder(folder_path).entries
+        mp4_files = [f for f in files if isinstance(f, dropbox.files.FileMetadata) and f.name.lower().endswith(".mp4")]
 
-        with open(save_path, "wb") as f:
-            f.write(uploaded_file.read())
+        if not mp4_files:
+            st.info("No MP4 files found in this folder.")
+        else:
+            selected_file = st.selectbox("🎬 Choose video", mp4_files, format_func=lambda f: f.name)
+            link = dbx.sharing_create_shared_link_with_settings(selected_file.path_lower).url
+            direct_link = link.replace("?dl=0", "?raw=1").replace("?dl=1", "?raw=1")
 
-        label = st.text_input("Label", value=uploaded_file.name)
-        offset = st.number_input("Start Offset (seconds)", value=0.0, step=0.5)
+            label = st.text_input("Label", value=selected_file.name.rsplit(".", 1)[0])
+            offset = st.number_input("Start Offset (sec)", value=0.0, step=0.5)
 
-        if st.button("Save Video Info"):
-            with conn:
-                conn.execute(
-                    "INSERT INTO videos(match_id, label, url, offset) VALUES (?, ?, ?, ?)",
-                    (match_id, label.strip(), save_path, offset)
-                )
-            st.success(f"Video '{label}' saved for match!")
-            st.rerun()
+            if st.button("➕ Add to Match"):
+                with conn:
+                    conn.execute(
+                        "INSERT INTO videos(match_id,label,url,offset) VALUES(?,?,?,?)",
+                        (match_id, label, direct_link, offset)
+                    )
+                st.success(f"Added video: {label}")
+                st.rerun()
+
+    except dropbox.exceptions.ApiError as e:
+        st.error(f"Dropbox error: {e}")
+
 
     st.divider()
     st.subheader("🎦 Existing Videos")
