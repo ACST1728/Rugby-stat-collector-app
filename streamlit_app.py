@@ -115,3 +115,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+import threading, time, requests
+
+def keep_awake(url: str):
+    """Periodically ping the app to prevent it from sleeping."""
+    def loop():
+        while True:
+            try:
+                requests.get(url, timeout=10)
+            except Exception:
+                pass
+            time.sleep(600)  # every 10 minutes
+    threading.Thread(target=loop, daemon=True).start()
+
+# Replace with your actual deployed app URL:
+keep_awake("https://rugby-stat-collector-app-biejazu9hgtewyjjhbswh7.streamlit.app/")
