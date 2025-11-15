@@ -249,6 +249,8 @@ def get_dropbox():
 def page_videos(conn):
     st.header("🎞️ Video Manager")
 
+    st.write("Secrets keys:", list(st.secrets.keys()))
+
     # ✅ Debug Dropbox connection
     dbx = get_dropbox()
     if not dbx:
