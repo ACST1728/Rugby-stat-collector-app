@@ -239,7 +239,7 @@ def get_dropbox():
 
     try:
         dbx = dropbox.Dropbox(token)
-        dbx.users_get_current_account()  # verify it works
+        dbx.users_get_current_account()  # Verify token
         return dbx
     except Exception as e:
         st.error(f"Dropbox connection failed: {e}")
@@ -247,70 +247,57 @@ def get_dropbox():
 
 
 def page_videos(conn):
-    st.header("🎞️ Manage Match Videos")
+    st.header("🎞️ Video Manager")
 
-    # --- Debug: confirm Dropbox secret ---
-    st.caption("🔍 Checking Dropbox secret")
-    if "DROPBOX_ACCESS_TOKEN" in st.secrets:
-        st.success("✅ Dropbox token detected in secrets!")
-    else:
-        st.error("❌ No Dropbox token found in secrets.toml or Streamlit Secrets dashboard.")
-
-    matches = _matches_df(conn)
-    if matches.empty:
-        st.warning("No matches found. Please create one first.")
-        return
-
-    match_id = st.selectbox(
-        "Match",
-        matches["id"].tolist(),
-        format_func=lambda x: matches.set_index("id").loc[x, "opponent"]
-    )
-
-    # --- Current Videos ---
-    vids = pd.read_sql("SELECT * FROM videos WHERE match_id=?", conn, params=(match_id,))
-    if not vids.empty:
-        st.dataframe(vids[["label", "url", "offset"]], use_container_width=True)
-
-    st.divider()
-    st.subheader("📤 Add or Upload Video")
-
-    # --- Dropbox connection ---
+    # ✅ Debug Dropbox connection
     dbx = get_dropbox()
     if not dbx:
         st.warning("🔑 Please add your Dropbox API token to `.streamlit/secrets.toml` as `DROPBOX_ACCESS_TOKEN`.")
         st.code('[DROPBOX_ACCESS_TOKEN]\nYOUR_ACCESS_TOKEN_HERE', language="toml")
         st.stop()
+    else:
+        st.success("✅ Connected to Dropbox successfully!")
 
-    folder_path = st.text_input("📁 Dropbox Folder Path", value="/Videos")
+    matches = _matches_df(conn)
+    if matches.empty:
+        st.warning("Create a match first.")
+        return
 
-    # --- Upload directly to Dropbox ---
-    st.markdown("#### ⬆️ Upload a new MP4 file")
-    uploaded_file = st.file_uploader("Select MP4 file to upload", type=["mp4"], key="video_upload")
-    if uploaded_file is not None:
-        upload_name = st.text_input("Save as (filename.mp4)", value=uploaded_file.name)
+    match_id = st.selectbox(
+        "Match",
+        matches["id"].tolist(),
+        format_func=lambda x: f"{matches.set_index('id').loc[x, 'date']} — {matches.set_index('id').loc[x, 'opponent']}"
+    )
+    match = matches.set_index("id").loc[match_id]
+    folder_path = f"/rugby_videos/{match['date']}_{match['opponent'].replace(' ', '_')}"
+
+    st.divider()
+    st.subheader("📤 Add or Upload Video")
+
+    # --- Upload MP4 directly to Dropbox ---
+    uploaded_file = st.file_uploader("Upload MP4", type=["mp4"], key="video_upload")
+    if uploaded_file:
+        upload_name = st.text_input("Filename in Dropbox", value=uploaded_file.name)
         if st.button("🚀 Upload to Dropbox"):
             try:
                 dbx.files_upload(uploaded_file.read(), f"{folder_path}/{upload_name}", mute=True)
-                st.success(f"✅ Uploaded `{upload_name}` to Dropbox {folder_path}")
+                st.success(f"✅ Uploaded `{upload_name}` to {folder_path}")
                 st.rerun()
-            except dropbox.exceptions.ApiError as e:
+            except Exception as e:
                 st.error(f"Dropbox upload failed: {e}")
 
+    # --- Attach an existing Dropbox video to this match ---
     st.divider()
-
-    # --- Attach existing Dropbox video to match ---
-    st.markdown("#### 🎬 Select existing Dropbox video")
+    st.subheader("🎬 Select Existing Dropbox Video")
 
     try:
         files = dbx.files_list_folder(folder_path).entries
         mp4_files = [f for f in files if isinstance(f, dropbox.files.FileMetadata) and f.name.lower().endswith(".mp4")]
 
         if not mp4_files:
-            st.info("No MP4 files found in this folder.")
+            st.info(f"No videos found in {folder_path}.")
         else:
             selected_file = st.selectbox("Choose video", mp4_files, format_func=lambda f: f.name)
-            # create or reuse shareable link
             try:
                 link = dbx.sharing_create_shared_link_with_settings(selected_file.path_lower).url
             except dropbox.exceptions.ApiError:
@@ -318,12 +305,12 @@ def page_videos(conn):
                 link = links[0].url if links else None
 
             if not link:
-                st.error("Could not create or retrieve a Dropbox share link.")
+                st.error("Could not get Dropbox link.")
                 return
 
             direct_link = link.replace("?dl=0", "?raw=1").replace("?dl=1", "?raw=1")
             label = st.text_input("Label", value=selected_file.name.rsplit(".", 1)[0])
-            offset = st.number_input("Start Offset (sec)", value=0.0, step=0.5)
+            offset = st.number_input("Start offset (sec)", value=0.0, step=0.5)
 
             if st.button("➕ Add to Match"):
                 with conn:
@@ -334,20 +321,18 @@ def page_videos(conn):
                 st.success(f"Added video: {label}")
                 st.rerun()
 
-    except dropbox.exceptions.ApiError as e:
+    except Exception as e:
         st.error(f"Dropbox error: {e}")
 
-    # --- Existing Videos Preview ---
     st.divider()
     st.subheader("🎦 Existing Videos")
 
     vids = pd.read_sql(
-        "SELECT id, label, url, offset FROM videos WHERE match_id=? ORDER BY id",
+        "SELECT id,label,url,offset FROM videos WHERE match_id=? ORDER BY id",
         conn, params=(match_id,)
     )
-
     if vids.empty:
-        st.info("No videos attached to this match yet.")
+        st.info("No videos linked to this match yet.")
     else:
         for _, v in vids.iterrows():
             st.markdown(f"**{v['label']}** — Offset: {v['offset']}s")
