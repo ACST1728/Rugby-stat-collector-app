@@ -112,6 +112,19 @@ def main():
     app = importlib.import_module("rugby_stats_app_v5_main")
     app.main(conn, st.session_state.user["role"])
 
+# --- Keep-alive pinger to prevent Streamlit sleeping ---
+import threading, time, requests
+
+def keep_alive():
+    while True:
+        try:
+            requests.get("https://rugby-stat-collector-app.streamlit.app")  # ← use your real deployed URL
+        except Exception:
+            pass
+        time.sleep(600)  # every 10 minutes
+
+threading.Thread(target=keep_alive, daemon=True).start()
+
 
 if __name__ == "__main__":
     main()
